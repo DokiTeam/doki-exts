@@ -234,7 +234,7 @@ internal abstract class YuriGardenParser(
 		if (json.optBoolean("encrypted", false)) {
 			val data = json.optString("data")
 			if (data.isNullOrEmpty()) return raw
-			val decrypted = CryptoAES(context).decrypt(data, "OAqg95LgrfPM8r68")
+			val decrypted = CryptoAES(context).decrypt(data, "d7p3FBmASBpaWP")
 			return decrypted
 		}
 		return raw
