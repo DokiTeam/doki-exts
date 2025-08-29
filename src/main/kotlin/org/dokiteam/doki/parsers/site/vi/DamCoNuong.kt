@@ -18,7 +18,7 @@ import java.util.*
 internal class DamCoNuong(context: MangaLoaderContext) :
 	PagedMangaParser(context, MangaParserSource.DAMCONUONG, 30) {
 
-	override val configKeyDomain = ConfigKey.Domain("damconuong.run")
+	override val configKeyDomain = ConfigKey.Domain("damconuong.skin")
 
 	private val availableTags = suspendLazy(initializer = ::fetchTags)
 
@@ -184,17 +184,40 @@ internal class DamCoNuong(context: MangaLoaderContext) :
 	}
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-		val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain)).parseHtml()
-		return doc.select("div.text-center img.max-w-full.my-0.mx-auto").map { img ->
-			val url = img.attr("src") ?: img.attr("data-src")
-				?: throw ParseException("Image src not found!", chapter.url)
-			MangaPage(
-				id = generateUid(url),
-				url = url,
-				preview = null,
-				source = source,
-			)
-		}
+    val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain)).parseHtml()
+
+    // 1. Tìm script chứa 'window.encryptionConfig'. Logic này đã đúng.
+    val scriptContent = doc.selectFirst("script:containsData(window.encryptionConfig)")
+        ?.data()
+        ?: throw ParseException("Không tìm thấy script 'window.encryptionConfig'.", chapter.url)
+
+    // 2. Regex để trích xuất mảng "fallbackUrls".
+    val fallbackUrlsRegex = Regex(""""fallbackUrls"\s*:\s*(\[.*?\])""")
+    val arrayString = fallbackUrlsRegex.find(scriptContent)?.groupValues?.get(1)
+        ?: throw ParseException("Không tìm thấy mảng 'fallbackUrls' trong script.", chapter.url)
+
+    // 3. Regex cuối cùng: Trích xuất chính xác URL bằng cách nhận diện đuôi file ảnh.
+    // Nó sẽ tìm chuỗi bắt đầu bằng http và kết thúc bằng .jpg, .png, .webp, hoặc .gif.
+    // Điều này đảm bảo chỉ có URL sạch được lấy ra.
+    val urlRegex = Regex("""(https?:\\?/\\?[^"]+\.(?:jpg|jpeg|png|webp|gif))""")
+    val imageUrls = urlRegex.findAll(arrayString).map {
+        // Lấy URL từ group 1 và unescape các dấu gạch chéo '\/'
+        it.groupValues[1].replace("\\/", "/")
+    }.toList()
+
+    if (imageUrls.isEmpty()) {
+        throw ParseException("Không tìm thấy URL ảnh hợp lệ nào trong 'fallbackUrls'.", chapter.url)
+    }
+
+    // 4. Tạo danh sách MangaPage.
+    return imageUrls.map { url ->
+        MangaPage(
+            id = generateUid(url),
+            url = url,
+            preview = null,
+            source = source,
+        )
+    }
 	}
 
 	private fun parseChapterDate(date: String?): Long {
