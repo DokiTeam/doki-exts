@@ -18,7 +18,7 @@ import java.util.*
 internal class DamCoNuong(context: MangaLoaderContext) :
 	PagedMangaParser(context, MangaParserSource.DAMCONUONG, 30) {
 
-	override val configKeyDomain = ConfigKey.Domain("damconuong.run")
+	override val configKeyDomain = ConfigKey.Domain("damconuong.skin")
 
 	private val availableTags = suspendLazy(initializer = ::fetchTags)
 
@@ -88,14 +88,14 @@ internal class DamCoNuong(context: MangaLoaderContext) :
 				append(filter.tags.joinTo(this, ",") { it.key })
 			}
 
-			if (filter.tagsExclude.isNotEmpty()) {
-				append("&filter[reject_genres]=")
-				append(filter.tagsExclude.joinTo(this, ",") { it.key })
-			}
-
 			if (!filter.query.isNullOrEmpty()) {
 				append("&filter[name]=")
 				append(filter.query.urlEncoded())
+			}
+
+			if (filter.tagsExclude.isNotEmpty()) {
+				append("&filter[reject_genres]=")
+				append(filter.tagsExclude.joinTo(this, ",") { it.key })
 			}
 
 			append("&page=$page")
@@ -185,16 +185,37 @@ internal class DamCoNuong(context: MangaLoaderContext) :
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
 		val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain)).parseHtml()
-		return doc.select("div.text-center img.max-w-full.my-0.mx-auto").map { img ->
-			val url = img.attr("src") ?: img.attr("data-src")
-				?: throw ParseException("Image src not found!", chapter.url)
-			MangaPage(
-				id = generateUid(url),
-				url = url,
-				preview = null,
-				source = source,
-			)
+
+		doc.selectFirst("script:containsData(window.encryptionConfig)")?.data()?.let { scriptContent ->
+			val fallbackUrlsRegex = Regex(""""fallbackUrls"\s*:\s*(\[.*?])""")
+			val arrayString = fallbackUrlsRegex.find(scriptContent)?.groupValues?.get(1) ?: return@let
+			val urlRegex = Regex("""(https?:\\?/\\?[^"]+\.(?:jpg|jpeg|png|webp|gif))""")
+			val scriptImages = urlRegex.findAll(arrayString).map {
+				it.groupValues[1].replace("\\/", "/")
+			}.toList()
+
+			if (scriptImages.isNotEmpty()) {
+				return scriptImages.map { url ->
+					MangaPage(id = generateUid(url), url = url, preview = null, source = source)
+				}
+			}
 		}
+
+		val tagImagePages = doc.select("div#chapter-content img").mapNotNull { img ->
+			val imageUrl = (img.attr("abs:src").takeIf { it.isNotBlank() }
+				?: img.attr("abs:data-src").takeIf { it.isNotBlank() })
+				?.trim()
+
+			imageUrl?.let {
+				MangaPage(id = generateUid(it), url = it, preview = null, source = source)
+			}
+		}
+
+		if (tagImagePages.isNotEmpty()) {
+			return tagImagePages
+		}
+
+		throw ParseException("Không tìm thấy bất kỳ nguồn ảnh nào (đã thử cả script và thẻ img).", chapter.url)
 	}
 
 	private fun parseChapterDate(date: String?): Long {

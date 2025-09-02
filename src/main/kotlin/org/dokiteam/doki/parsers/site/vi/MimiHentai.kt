@@ -1,9 +1,14 @@
 package org.dokiteam.doki.parsers.site.vi
 
+import kotlinx.coroutines.runBlocking
+import okhttp3.Interceptor
+import okhttp3.Response
 import org.json.JSONArray
-import org.dokiteam.doki.parsers.Broken
+import org.json.JSONObject
 import org.dokiteam.doki.parsers.MangaLoaderContext
 import org.dokiteam.doki.parsers.MangaSourceParser
+import org.dokiteam.doki.parsers.bitmap.Bitmap
+import org.dokiteam.doki.parsers.bitmap.Rect
 import org.dokiteam.doki.parsers.config.ConfigKey
 import org.dokiteam.doki.parsers.core.PagedMangaParser
 import org.dokiteam.doki.parsers.network.UserAgents
@@ -13,7 +18,6 @@ import org.dokiteam.doki.parsers.util.json.*
 import java.text.SimpleDateFormat
 import java.util.*
 
-@Broken("Request from site owner: Open webview to read")
 @MangaSourceParser("MIMIHENTAI", "MimiHentai", "vi", type = ContentType.HENTAI)
 internal class MimiHentai(context: MangaLoaderContext) :
 	PagedMangaParser(context, MangaParserSource.MIMIHENTAI, 18) {
@@ -258,7 +262,7 @@ internal class MimiHentai(context: MangaLoaderContext) :
 				id = generateUid(jo.getLong("id")),
 				title = jo.getStringOrNull("title"),
 				number = jo.getFloatOrDefault("order", 0f),
-				url = "/$apiSuffix/chapter?id=${jo.getLong("id")}",
+				url = "${jo.getLong("id")}",
 				uploadDate = dateFormat.parse(jo.getString("createdAt"))?.time ?: 0L,
 				source = source,
 				scanlator = uploaderName,
@@ -275,13 +279,160 @@ internal class MimiHentai(context: MangaLoaderContext) :
 	}
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-		val json = webClient.httpGet(chapter.url.toAbsoluteUrl(domain)).parseJson()
+		val url = context.decodeBase64(KuroNeko.PATH)
+			.decodeXorCipher()
+			.toString(Charsets.UTF_8) + "/" + chapter.url
+		val json = webClient.httpGet(url).parseJson()
+		return json.getJSONArray("pages").mapJSON { jo ->
+			val imageUrl = jo.getString("imageUrl")
+			val gt = jo.getStringOrNull("drm")
+			MangaPage(
+				id = generateUid(imageUrl),
+				url = if (gt != null) "$imageUrl#$GT$gt" else imageUrl,
+				preview = null,
+				source = source,
+			)
+		}
+	}
 
-		val info = json.getJSONObject("info")
-		val manga = info.getJSONObject("manga")
+	override fun intercept(chain: Interceptor.Chain): Response {
+		val response = chain.proceed(chain.request())
+		val fragment = response.request.url.fragment
 
-		val chapterUrl = "https://$domain/g/${manga.getInt("id")}/chapter/${info.getString("title")}-${info.getInt("id")}"
-		context.requestBrowserAction(this, chapterUrl)
+		if (fragment == null || !fragment.contains(GT)) {
+			return response
+		}
+
+		return context.redrawImageResponse(response) { bitmap ->
+			val gt = fragment.substringAfter(GT)
+			runBlocking {
+				extractMetadata(bitmap, gt)
+			}
+		}
+	}
+
+	private fun extractMetadata(bitmap: Bitmap, gt: String): Bitmap {
+		val metadata = JSONObject().apply {
+			var sw = 0
+			var sh = 0
+			val pos = JSONObject()
+			val dims = JSONObject()
+
+			for (t in gt.split("|")) {
+				when {
+					t.startsWith("sw:") -> sw = t.substring(3).toInt()
+					t.startsWith("sh:") -> sh = t.substring(3).toInt()
+					t.contains("@") && t.contains(">") -> {
+						val (left, right) = t.split(">")
+						val (n, rectStr) = left.split("@")
+						val (x, y, w, h) = rectStr.split(",").map { it.toInt() }
+						dims.put(n, JSONObject().apply {
+							put("x", x)
+							put("y", y)
+							put("width", w)
+							put("height", h)
+						})
+						pos.put(n, right)
+					}
+				}
+			}
+			put("sw", sw)
+			put("sh", sh)
+			put("dims", dims)
+			put("pos", pos)
+		}
+
+		val sw = metadata.optInt("sw")
+		val sh = metadata.optInt("sh")
+		if (sw <= 0 || sh <= 0) return bitmap
+
+		val fullW = bitmap.width
+		val fullH = bitmap.height
+
+		val working = context.createBitmap(sw, sh).also { k ->
+			k.drawBitmap(bitmap, Rect(0, 0, sw, sh), Rect(0, 0, sw, sh))
+		}
+
+		val keys = arrayOf("00","01","02","10","11","12","20","21","22")
+		val baseW = sw / 3
+		val baseH = sh / 3
+		val rw = sw % 3
+		val rh = sh % 3
+		val defaultDims = HashMap<String, IntArray>().apply {
+			for (k in keys) {
+				val i = k[0].digitToInt()
+				val j = k[1].digitToInt()
+				val w = baseW + if (j == 2) rw else 0
+				val h = baseH + if (i == 2) rh else 0
+				put(k, intArrayOf(j * baseW, i * baseH, w, h))
+			}
+		}
+
+		val dimsJson = metadata.optJSONObject("dims") ?: JSONObject()
+		val dims = HashMap<String, IntArray>().apply {
+			for (k in keys) {
+				val jo = dimsJson.optJSONObject(k)
+				if (jo != null) {
+					put(k, intArrayOf(
+						jo.getInt("x"),
+						jo.getInt("y"),
+						jo.getInt("width"),
+						jo.getInt("height"),
+					))
+				} else {
+					put(k, defaultDims.getValue(k))
+				}
+			}
+		}
+
+		val pos = metadata.optJSONObject("pos") ?: JSONObject()
+		val inv = HashMap<String, String>().apply {
+			val it = pos.keys()
+			while (it.hasNext()) {
+				val a = it.next()
+				val b = pos.getString(a)
+				put(b, a)
+			}
+		}
+
+		val result = context.createBitmap(fullW, fullH)
+
+		for (k in keys) {
+			val srcKey = inv[k] ?: continue
+			val s = dims.getValue(k)
+			val d = dims.getValue(srcKey)
+			result.drawBitmap(
+				working,
+				Rect(s[0], s[1], s[0] + s[2], s[1] + s[3]),
+				Rect(d[0], d[1], d[0] + d[2], d[1] + d[3]),
+			)
+		}
+
+		if (sh < fullH) {
+			result.drawBitmap(
+				bitmap,
+				Rect(0, sh, fullW, fullH),
+				Rect(0, sh, fullW, fullH),
+			)
+		}
+		if (sw < fullW) {
+			result.drawBitmap(
+				bitmap,
+				Rect(sw, 0, fullW, sh),
+				Rect(sw, 0, fullW, sh),
+			)
+		}
+
+		return result
+	}
+
+	private fun ByteArray.decodeXorCipher(): ByteArray {
+		val k = "kotatsuanddokiarethebest"
+			.toByteArray(Charsets.UTF_8)
+
+		return this.mapIndexed { i, b ->
+			(b.toInt() xor k[i % k.size].toInt()).toByte()
+		}.toByteArray()
 	}
 
 	private suspend fun fetchTags(): Set<MangaTag> {
@@ -294,5 +445,9 @@ internal class MimiHentai(context: MangaLoaderContext) :
 				source = source,
 			)
 		}
+	}
+
+	companion object {
+		private const val GT = "gt="
 	}
 }
