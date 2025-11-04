@@ -45,6 +45,7 @@ import org.dokiteam.doki.parsers.util.suspendlazy.suspendLazy
 import org.dokiteam.doki.parsers.util.toAbsoluteUrl
 import org.dokiteam.doki.parsers.util.toTitleCase
 import org.dokiteam.doki.parsers.util.urlEncoded
+import org.dokiteam.doki.parsers.network.CloudFlareHelper
 import java.text.SimpleDateFormat
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
@@ -73,9 +74,28 @@ internal abstract class MangaFireParser(
             .hostnameVerifier { _, _ -> true }
             .addInterceptor { chain ->
                 val request = chain.request()
-                val response = chain.proceed(request.newBuilder()
+                val newRequest = request.newBuilder()
                     .addHeader("Referer", "https://$domain/")
-                    .build())
+                    .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .addHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
+                    .addHeader("Accept-Language", "en-US,en;q=0.9")
+                    .addHeader("Accept-Encoding", "gzip, deflate, br")
+                    .addHeader("Connection", "keep-alive")
+                    .addHeader("Upgrade-Insecure-Requests", "1")
+                    .addHeader("Sec-Fetch-Dest", "document")
+                    .addHeader("Sec-Fetch-Mode", "navigate")
+                    .addHeader("Sec-Fetch-Site", "same-origin")
+                    .addHeader("Cache-Control", "max-age=0")
+                    .build()
+
+                val response = chain.proceed(newRequest)
+
+                // Check for CloudFlare protection
+                val protection = CloudFlareHelper.checkResponseForProtection(response)
+                if (protection != CloudFlareHelper.PROTECTION_NOT_DETECTED) {
+                    response.close()
+                    throw org.dokiteam.doki.parsers.exception.AuthRequiredException(source)
+                }
 
                 if (request.url.fragment?.startsWith("scrambled") == true) {
                     return@addInterceptor context.redrawImageResponse(response) { bitmap ->
