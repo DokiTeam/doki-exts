@@ -254,6 +254,5 @@ internal class KuroNeko(context: MangaLoaderContext) : PagedMangaParser(context,
 
 	companion object {
 		private const val PAGES_REQUEST_DELAY_MS = 5000L
-		const val PATH = "AxsAEQdJWk4YDUkHDgcVEwxaBQoHShIXHwYbD1seHAwHOwAKCAYFFw==\n"
 	}
 }
