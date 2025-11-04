@@ -45,7 +45,6 @@ import org.dokiteam.doki.parsers.util.suspendlazy.suspendLazy
 import org.dokiteam.doki.parsers.util.toAbsoluteUrl
 import org.dokiteam.doki.parsers.util.toTitleCase
 import org.dokiteam.doki.parsers.util.urlEncoded
-import org.dokiteam.doki.parsers.network.CloudFlareHelper
 import java.text.SimpleDateFormat
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
@@ -63,9 +62,9 @@ private const val MIN_SPLIT_COUNT = 5
 
 @Suppress("CustomX509TrustManager")
 internal abstract class MangaFireParser(
-	context: MangaLoaderContext,
-	source: MangaParserSource,
-	private val siteLang: String,
+    context: MangaLoaderContext,
+    source: MangaParserSource,
+    private val siteLang: String,
 ) : PagedMangaParser(context, source, 30), Interceptor, MangaParserAuthProvider {
 
     private val client: WebClient by lazy {
@@ -73,10 +72,10 @@ internal abstract class MangaFireParser(
             .sslSocketFactory(SSLUtils.sslSocketFactory!!, SSLUtils.trustManager)
             .hostnameVerifier { _, _ -> true }
             .addInterceptor { chain ->
+                val request = chain.request()
                 val response = chain.proceed(request.newBuilder()
-                val newRequest = request.newBuilder()
                     .addHeader("Referer", "https://$domain/")
-                    .build()
+                    .build())
 
                 if (request.url.fragment?.startsWith("scrambled") == true) {
                     return@addInterceptor context.redrawImageResponse(response) { bitmap ->
@@ -124,226 +123,240 @@ internal abstract class MangaFireParser(
         OkHttpWebClient(newHttpClient, source)
     }
 
-	override val configKeyDomain: ConfigKey.Domain = ConfigKey.Domain("mangafire.to")
+    override val configKeyDomain: ConfigKey.Domain = ConfigKey.Domain("mangafire.to")
 
-	override val availableSortOrders: Set<SortOrder> = EnumSet.of(
-		SortOrder.UPDATED,
-		SortOrder.POPULARITY,
-		SortOrder.RATING,
-		SortOrder.NEWEST,
-		SortOrder.ALPHABETICAL,
-		SortOrder.RELEVANCE,
-	)
+    override val availableSortOrders: Set<SortOrder> = EnumSet.of(
+        SortOrder.UPDATED,
+        SortOrder.POPULARITY,
+        SortOrder.RATING,
+        SortOrder.NEWEST,
+        SortOrder.ALPHABETICAL,
+        SortOrder.RELEVANCE,
+    )
 
-	override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
-		super.onCreateConfig(keys)
-		keys.add(userAgentKey)
-	}
+    override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
+        super.onCreateConfig(keys)
+        keys.add(userAgentKey)
+    }
 
-	override val authUrl: String
-		get() = "https://${domain}"
+    override val authUrl: String
+        get() = "https://${domain}"
 
-	override suspend fun isAuthorized(): Boolean {
-		return context.cookieJar.getCookies(domain).any {
-			it.value.contains("user")
-		}
-	}
+    override suspend fun isAuthorized(): Boolean {
+        return context.cookieJar.getCookies(domain).any {
+            it.value.contains("user")
+        }
+    }
 
-	override suspend fun getUsername(): String {
-		val body = client.httpGet("https://${domain}/user/profile").parseHtml().body()
-		return body.selectFirst("form.ajax input[name*=username]")?.attr("value")
-			?: body.parseFailed("Cannot find username")
-	}
+    override suspend fun getUsername(): String {
+        val body = client.httpGet("https://${domain}/user/profile").parseHtml().body()
+        return body.selectFirst("form.ajax input[name*=username]")?.attr("value")
+            ?: body.parseFailed("Cannot find username")
+    }
 
-	private val tags = suspendLazy(soft = true) {
-		client.httpGet("https://$domain/filter").parseHtml()
-			.select(".genres > li").map {
-				MangaTag(
-					title = it.selectFirstOrThrow("label").ownText().toTitleCase(sourceLocale),
-					key = it.selectFirstOrThrow("input").attr("value"),
-					source = source,
-				)
-			}.associateBy { it.title }
-	}
+    private val tags = suspendLazy(soft = true) {
+        client.httpGet("https://$domain/filter").parseHtml()
+            .select(".genres > li").map {
+                MangaTag(
+                    title = it.selectFirstOrThrow("label").ownText().toTitleCase(sourceLocale),
+                    key = it.selectFirstOrThrow("input").attr("value"),
+                    source = source,
+                )
+            }.associateBy { it.title }
+    }
 
-	override val filterCapabilities: MangaListFilterCapabilities
-		get() = MangaListFilterCapabilities(
-			isMultipleTagsSupported = true,
-			isTagsExclusionSupported = true,
-			isSearchSupported = true,
-		)
+    override val filterCapabilities: MangaListFilterCapabilities
+        get() = MangaListFilterCapabilities(
+            isMultipleTagsSupported = true,
+            isTagsExclusionSupported = true,
+            isSearchSupported = true,
+        )
 
-	override suspend fun getFilterOptions() = MangaListFilterOptions(
-		availableTags = tags.get().values.toSet(),
-		availableStates = EnumSet.of(
-			MangaState.ONGOING,
-			MangaState.FINISHED,
-			MangaState.ABANDONED,
-			MangaState.PAUSED,
-			MangaState.UPCOMING,
-		),
-	)
+    override suspend fun getFilterOptions() = MangaListFilterOptions(
+        availableTags = tags.get().values.toSet(),
+        availableStates = EnumSet.of(
+            MangaState.ONGOING,
+            MangaState.FINISHED,
+            MangaState.ABANDONED,
+            MangaState.PAUSED,
+            MangaState.UPCOMING,
+        ),
+    )
 
-	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
-		val url = "https://$domain/filter".toHttpUrl().newBuilder().apply {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+        val url = "https://$domain/filter".toHttpUrl().newBuilder().apply {
+            addQueryParameter("page", page.toString())
+            addQueryParameter("language[]", siteLang)
+
             when {
                 !filter.query.isNullOrEmpty() -> {
-                    // Search format: /filter?keyword=eleceed&vrf=...
-                    addQueryParameter("keyword", filter.query.trim())
+                    val encodedQuery = filter.query.splitByWhitespace().joinToString(separator = "+") { part ->
+                        part.urlEncoded()
+                    }
+                    addEncodedQueryParameter("keyword", encodedQuery)
 
-                    // Generate VRF for search query (preserve original case)
-                    val searchVrf = VrfGenerator.generate(filter.query)
+                    // Generate VRF for search query
+                    val searchVrf = VrfGenerator.generate(filter.query.trim())
                     addQueryParameter("vrf", searchVrf)
+
+                    addQueryParameter(
+                        name = "sort",
+                        value = when (order) {
+                            SortOrder.UPDATED -> "recently_updated"
+                            SortOrder.POPULARITY -> "total_views"
+                            SortOrder.RATING -> "mal_score"
+                            SortOrder.NEWEST -> "release_date"
+                            SortOrder.ALPHABETICAL -> "title_az"
+                            SortOrder.RELEVANCE -> "most_relevance"
+                            else -> ""
+                        },
+                    )
                 }
 
-				else -> {
-					// Browse format: /filter?page=1&language[]=en&sort=recently_updated
-					addQueryParameter("page", page.toString())
+                else -> {
+                    filter.tagsExclude.forEach { tag ->
+                        addQueryParameter("genre[]", "-${tag.key}")
+                    }
+                    filter.tags.forEach { tag ->
+                        addQueryParameter("genre[]", tag.key)
+                    }
+                    filter.locale?.let {
+                        addQueryParameter("language[]", it.language)
+                    }
+                    filter.states.forEach { state ->
+                        addQueryParameter(
+                            name = "status[]",
+                            value = when (state) {
+                                MangaState.ONGOING -> "releasing"
+                                MangaState.FINISHED -> "completed"
+                                MangaState.ABANDONED -> "discontinued"
+                                MangaState.PAUSED -> "on_hiatus"
+                                MangaState.UPCOMING -> "info"
+                                else -> throw IllegalArgumentException("$state not supported")
+                            },
+                        )
+                    }
+                    addQueryParameter(
+                        name = "sort",
+                        value = when (order) {
+                            SortOrder.UPDATED -> "recently_updated"
+                            SortOrder.POPULARITY -> "total_views"
+                            SortOrder.RATING -> "mal_score"
+                            SortOrder.NEWEST -> "release_date"
+                            SortOrder.ALPHABETICAL -> "title_az"
+                            SortOrder.RELEVANCE -> "most_relevance"
+                            else -> ""
+                        },
+                    )
+                }
+            }
+        }.build()
 
-					// Set language filter - use filter.locale if provided, otherwise use default siteLang
-					val languageCode = filter.locale?.language ?: siteLang
-					addQueryParameter("language[]", languageCode)
+        return client.httpGet(url)
+            .parseHtml().parseMangaList()
+    }
 
-					filter.tagsExclude.forEach { tag ->
-						addQueryParameter("genre[]", "-${tag.key}")
-					}
-					filter.tags.forEach { tag ->
-						addQueryParameter("genre[]", tag.key)
-					}
-					filter.states.forEach { state ->
-						addQueryParameter(
-							name = "status[]",
-							value = when (state) {
-								MangaState.ONGOING -> "releasing"
-								MangaState.FINISHED -> "completed"
-								MangaState.ABANDONED -> "discontinued"
-								MangaState.PAUSED -> "on_hiatus"
-								MangaState.UPCOMING -> "info"
-								else -> throw IllegalArgumentException("$state not supported")
-							},
-						)
-					}
-					addQueryParameter(
-						name = "sort",
-						value = when (order) {
-							SortOrder.UPDATED -> "recently_updated"
-							SortOrder.POPULARITY -> "total_views"
-							SortOrder.RATING -> "mal_score"
-							SortOrder.NEWEST -> "release_date"
-							SortOrder.ALPHABETICAL -> "title_az"
-							SortOrder.RELEVANCE -> "most_relevance"
-							else -> ""
-						},
-					)
-				}
-			}
-		}.build()
+    private fun Document.parseMangaList(): List<Manga> {
+        return select(".original.card-lg .unit .inner").map {
+            val a = it.selectFirstOrThrow(".info > a")
+            val mangaUrl = a.attrAsRelativeUrl("href")
+            Manga(
+                id = generateUid(mangaUrl),
+                url = mangaUrl,
+                publicUrl = mangaUrl.toAbsoluteUrl(domain),
+                title = a.ownText(),
+                coverUrl = it.selectFirstOrThrow("img").attrAsAbsoluteUrl("src"),
+                source = source,
+                altTitles = emptySet(),
+                largeCoverUrl = null,
+                authors = emptySet(),
+                contentRating = null,
+                rating = RATING_UNKNOWN,
+                state = null,
+                tags = emptySet(),
+            )
+        }
+    }
 
-		return client.httpGet(url)
-			.parseHtml().parseMangaList()
-	}
+    override suspend fun getDetails(manga: Manga): Manga {
+        val document = webClient.httpGet(manga.url.toAbsoluteUrl(domain)).parseHtml()
+        val availableTags = tags.get()
+        var isAdult = false
+        var isSuggestive = false
+        val author = document.select("div.meta a[href*=/author/]")
+            .joinToString { it.ownText() }.nullIfEmpty()
 
-	private fun Document.parseMangaList(): List<Manga> {
-		return select(".original.card-lg .unit .inner").map {
-			val a = it.selectFirstOrThrow(".info > a")
-			val mangaUrl = a.attrAsRelativeUrl("href")
-			Manga(
-				id = generateUid(mangaUrl),
-				url = mangaUrl,
-				publicUrl = mangaUrl.toAbsoluteUrl(domain),
-				title = a.ownText(),
-				coverUrl = it.selectFirstOrThrow("img").attrAsAbsoluteUrl("src"),
-				source = source,
-				altTitles = emptySet(),
-				largeCoverUrl = null,
-				authors = emptySet(),
-				contentRating = null,
-				rating = RATING_UNKNOWN,
-				state = null,
-				tags = emptySet(),
-			)
-		}
-	}
+        return manga.copy(
+            title = document.selectFirstOrThrow(".info > h1").ownText(),
+            altTitles = setOfNotNull(document.selectFirst(".info > h6")?.ownTextOrNull()),
+            rating = document.selectFirst("div.rating-box")?.attr("data-score")
+                ?.toFloatOrNull()?.div(10) ?: RATING_UNKNOWN,
+            coverUrl = document.selectFirstOrThrow("div.manga-detail div.poster img")
+                .attrAsAbsoluteUrl("src"),
+            tags = document.select("div.meta a[href*=/genre/]").mapNotNullToSet {
+                val tag = it.ownText()
+                if (tag == "Hentai") {
+                    isAdult = true
+                } else if (tag == "Ecchi") {
+                    isSuggestive = true
+                }
+                availableTags[tag.toTitleCase(sourceLocale)]
+            },
+            contentRating = when {
+                isAdult -> ContentRating.ADULT
+                isSuggestive -> ContentRating.SUGGESTIVE
+                else -> ContentRating.SAFE
+            },
+            state = document.selectFirst(".info > p")?.ownText()?.let {
+                when (it.lowercase()) {
+                    "releasing" -> MangaState.ONGOING
+                    "completed" -> MangaState.FINISHED
+                    "discontinued" -> MangaState.ABANDONED
+                    "on_hiatus" -> MangaState.PAUSED
+                    "info" -> MangaState.UPCOMING
+                    else -> null
+                }
+            },
+            authors = setOfNotNull(author),
+            description = document.selectFirstOrThrow("#synopsis div.modal-content").html(),
+            chapters = getChapters(manga.url, document),
+        )
+    }
 
-	override suspend fun getDetails(manga: Manga): Manga {
-		val document = client.httpGet(manga.url.toAbsoluteUrl(domain)).parseHtml()
-		val availableTags = tags.get()
-		var isAdult = false
-		var isSuggestive = false
-		val author = document.select("div.meta a[href*=/author/]")
-			.joinToString { it.ownText() }.nullIfEmpty()
+    private data class ChapterBranch(
+        val type: String,
+        val langCode: String,
+        val langTitle: String,
+    )
 
-		return manga.copy(
-			title = document.selectFirstOrThrow(".info > h1").ownText(),
-			altTitles = setOfNotNull(document.selectFirst(".info > h6")?.ownTextOrNull()),
-			rating = document.selectFirst("div.rating-box")?.attr("data-score")
-				?.toFloatOrNull()?.div(10) ?: RATING_UNKNOWN,
-			coverUrl = document.selectFirstOrThrow("div.manga-detail div.poster img")
-				.attrAsAbsoluteUrl("src"),
-			tags = document.select("div.meta a[href*=/genre/]").mapNotNullToSet {
-				val tag = it.ownText()
-				if (tag == "Hentai") {
-					isAdult = true
-				} else if (tag == "Ecchi") {
-					isSuggestive = true
-				}
-				availableTags[tag.toTitleCase(sourceLocale)]
-			},
-			contentRating = when {
-				isAdult -> ContentRating.ADULT
-				isSuggestive -> ContentRating.SUGGESTIVE
-				else -> ContentRating.SAFE
-			},
-			state = document.selectFirst(".info > p")?.ownText()?.let {
-				when (it.lowercase()) {
-					"releasing" -> MangaState.ONGOING
-					"completed" -> MangaState.FINISHED
-					"discontinued" -> MangaState.ABANDONED
-					"on_hiatus" -> MangaState.PAUSED
-					"info" -> MangaState.UPCOMING
-					else -> null
-				}
-			},
-			authors = setOfNotNull(author),
-			description = document.selectFirstOrThrow("#synopsis div.modal-content").html(),
-			chapters = getChapters(manga.url, document),
-		)
-	}
+    private suspend fun getChapters(mangaUrl: String, document: Document): List<MangaChapter> {
+        val availableTypes = document.select(".chapvol-tab > a").map {
+            it.attr("data-name")
+        }
+        val langTypePairs = document.select(".m-list div.tab-content").flatMap {
+            val type = it.attr("data-name")
 
-	private data class ChapterBranch(
-		val type: String,
-		val langCode: String,
-		val langTitle: String,
-	)
+            it.select(".list-menu .dropdown-item").map { item ->
+                ChapterBranch(
+                    type = type,
+                    langCode = item.attr("data-code").lowercase(),
+                    langTitle = item.attr("data-title"),
+                )
+            }
+        }.filter {
+            it.langCode == siteLang && availableTypes.contains(it.type)
+        }
 
-	private suspend fun getChapters(mangaUrl: String, document: Document): List<MangaChapter> {
-		val availableTypes = document.select(".chapvol-tab > a").map {
-			it.attr("data-name")
-		}
-		val langTypePairs = document.select(".m-list div.tab-content").flatMap {
-			val type = it.attr("data-name")
+        val id = mangaUrl.substringAfterLast('.')
 
-			it.select(".list-menu .dropdown-item").map { item ->
-				ChapterBranch(
-					type = type,
-					langCode = item.attr("data-code").lowercase(),
-					langTitle = item.attr("data-title"),
-				)
-			}
-		}.filter {
-			it.langCode == siteLang && availableTypes.contains(it.type)
-		}
-
-		val id = mangaUrl.substringAfterLast('.')
-
-		return coroutineScope {
-			langTypePairs.map {
-				async {
-					getChaptersBranch(id, it)
-				}
-			}.awaitAll().flatten()
-		}
-	}
+        return coroutineScope {
+            langTypePairs.map {
+                async {
+                    getChaptersBranch(id, it)
+                }
+            }.awaitAll().flatten()
+        }
+    }
 
     private suspend fun getChaptersBranch(mangaId: String, branch: ChapterBranch): List<MangaChapter> {
         val readVrfInput = "$mangaId@${branch.type}@${branch.langCode}"
@@ -358,12 +371,12 @@ internal abstract class MangaFireParser(
             .let(Jsoup::parseBodyFragment)
             .select("ul li a")
 
-		if (branch.type == "chapter") {
-			val doc = client
-				.httpGet("https://$domain/ajax/manga/$mangaId/${branch.type}/${branch.langCode}")
-				.parseJson()
-				.getString("result")
-				.let(Jsoup::parseBodyFragment)
+        if (branch.type == "chapter") {
+            val doc = client
+                .httpGet("https://$domain/ajax/manga/$mangaId/${branch.type}/${branch.langCode}")
+                .parseJson()
+                .getString("result")
+                .let(Jsoup::parseBodyFragment)
 
             doc.select("ul li a").withIndex().forEach { (i, it) ->
                 val date = it.select("span").getOrNull(1)?.ownText() ?: ""
@@ -392,90 +405,90 @@ internal abstract class MangaFireParser(
         }
     }
 
-	private val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.ENGLISH)
-	private val volumeNumRegex = Regex("""vol(ume)?\s*(\d+)""", RegexOption.IGNORE_CASE)
+    private val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.ENGLISH)
+    private val volumeNumRegex = Regex("""vol(ume)?\s*(\d+)""", RegexOption.IGNORE_CASE)
 
-	override suspend fun getRelatedManga(seed: Manga): List<Manga> = coroutineScope {
-		val document = client.httpGet(seed.url.toAbsoluteUrl(domain)).parseHtml()
-		val total = document.select(
-			"section.m-related a[href*=/manga/], .side-manga:not(:has(.head:contains(trending))) .unit",
-		).size
-		val mangas = ArrayList<Manga>(total)
+    override suspend fun getRelatedManga(seed: Manga): List<Manga> = coroutineScope {
+        val document = client.httpGet(seed.url.toAbsoluteUrl(domain)).parseHtml()
+        val total = document.select(
+            "section.m-related a[href*=/manga/], .side-manga:not(:has(.head:contains(trending))) .unit",
+        ).size
+        val mangas = ArrayList<Manga>(total)
 
-		// "Related Manga"
-		document.select("section.m-related a[href*=/manga/]").map {
-			async {
-				val url = it.attrAsRelativeUrl("href")
+        // "Related Manga"
+        document.select("section.m-related a[href*=/manga/]").map {
+            async {
+                val url = it.attrAsRelativeUrl("href")
 
-				val mangaDocument = client
-					.httpGet(url.toAbsoluteUrl(domain))
-					.parseHtml()
+                val mangaDocument = client
+                    .httpGet(url.toAbsoluteUrl(domain))
+                    .parseHtml()
 
-				val chaptersInManga = mangaDocument.select(".m-list div.tab-content .list-menu .dropdown-item")
-					.map { i -> i.attr("data-code").lowercase() }
+                val chaptersInManga = mangaDocument.select(".m-list div.tab-content .list-menu .dropdown-item")
+                    .map { i -> i.attr("data-code").lowercase() }
 
 
-				if (!chaptersInManga.contains(siteLang)) {
-					return@async null
-				}
+                if (!chaptersInManga.contains(siteLang)) {
+                    return@async null
+                }
 
-				Manga(
-					id = generateUid(url),
-					url = url,
-					publicUrl = url.toAbsoluteUrl(domain),
-					title = it.ownText(),
-					coverUrl = mangaDocument.selectFirstOrThrow("div.manga-detail div.poster img")
-						.attrAsAbsoluteUrl("src"),
-					source = source,
-					altTitles = emptySet(),
-					largeCoverUrl = null,
-					authors = emptySet(),
-					contentRating = null,
-					rating = RATING_UNKNOWN,
-					state = null,
-					tags = emptySet(),
-				)
-			}
-		}.awaitAll()
-			.filterNotNullTo(mangas)
+                Manga(
+                    id = generateUid(url),
+                    url = url,
+                    publicUrl = url.toAbsoluteUrl(domain),
+                    title = it.ownText(),
+                    coverUrl = mangaDocument.selectFirstOrThrow("div.manga-detail div.poster img")
+                        .attrAsAbsoluteUrl("src"),
+                    source = source,
+                    altTitles = emptySet(),
+                    largeCoverUrl = null,
+                    authors = emptySet(),
+                    contentRating = null,
+                    rating = RATING_UNKNOWN,
+                    state = null,
+                    tags = emptySet(),
+                )
+            }
+        }.awaitAll()
+            .filterNotNullTo(mangas)
 
-		// "You may also like"
-		document.select(".side-manga:not(:has(.head:contains(trending))) .unit").forEach {
-			val url = it.attrAsRelativeUrl("href")
-			mangas.add(
-				Manga(
-					id = generateUid(url),
-					url = url,
-					publicUrl = url.toAbsoluteUrl(domain),
-					title = it.selectFirstOrThrow(".info h6").ownText(),
-					coverUrl = it.selectFirstOrThrow(".poster img").attrAsAbsoluteUrl("src"),
-					source = source,
-					altTitles = emptySet(),
-					largeCoverUrl = null,
-					authors = emptySet(),
-					contentRating = null,
-					rating = RATING_UNKNOWN,
-					state = null,
-					tags = emptySet(),
-				),
-			)
-		}
+        // "You may also like"
+        document.select(".side-manga:not(:has(.head:contains(trending))) .unit").forEach {
+            val url = it.attrAsRelativeUrl("href")
+            mangas.add(
+                Manga(
+                    id = generateUid(url),
+                    url = url,
+                    publicUrl = url.toAbsoluteUrl(domain),
+                    title = it.selectFirstOrThrow(".info h6").ownText(),
+                    coverUrl = it.selectFirstOrThrow(".poster img").attrAsAbsoluteUrl("src"),
+                    source = source,
+                    altTitles = emptySet(),
+                    largeCoverUrl = null,
+                    authors = emptySet(),
+                    contentRating = null,
+                    rating = RATING_UNKNOWN,
+                    state = null,
+                    tags = emptySet(),
+                ),
+            )
+        }
 
-		mangas.ifEmpty {
-			// fallback: author's other works
-			document.select("div.meta a[href*=/author/]").map {
-				async {
-					val url = it.attrAsAbsoluteUrl("href").toHttpUrl()
-						.newBuilder()
-						.addQueryParameter("language[]", siteLang)
-						.build()
+        mangas.ifEmpty {
+            // fallback: author's other works
+            document.select("div.meta a[href*=/author/]").map {
+                async {
+                    val url = it.attrAsAbsoluteUrl("href").toHttpUrl()
+                        .newBuilder()
+                        .addQueryParameter("language[]", siteLang)
+                        .build()
 
-					client.httpGet(url)
-						.parseHtml().parseMangaList()
-				}
-			}.awaitAll().flatten()
-		}
-	}
+                    client.httpGet(url)
+                        .parseHtml().parseMangaList()
+                }
+            }.awaitAll().flatten()
+        }
+    }
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         val chapterId = chapter.url.substringAfterLast('/')
@@ -487,55 +500,55 @@ internal abstract class MangaFireParser(
             .getJSONObject("result")
             .getJSONArray("images")
 
-		val pages = ArrayList<MangaPage>(images.length())
+        val pages = ArrayList<MangaPage>(images.length())
 
-		for (i in 0 until images.length()) {
-			val img = images.getJSONArray(i)
+        for (i in 0 until images.length()) {
+            val img = images.getJSONArray(i)
 
-			val url = img.getString(0)
-			val offset = img.getInt(2)
+            val url = img.getString(0)
+            val offset = img.getInt(2)
 
-			pages.add(
-				MangaPage(
-					id = generateUid(url),
-					url = if (offset < 1) {
-						url
-					} else {
-						"$url#scrambled_$offset"
-					},
-					preview = null,
-					source = source,
-				),
-			)
-		}
+            pages.add(
+                MangaPage(
+                    id = generateUid(url),
+                    url = if (offset < 1) {
+                        url
+                    } else {
+                        "$url#scrambled_$offset"
+                    },
+                    preview = null,
+                    source = source,
+                ),
+            )
+        }
 
-		return pages
-	}
+        return pages
+    }
 
-	private fun Int.ceilDiv(other: Int) = (this + (other - 1)) / other
+    private fun Int.ceilDiv(other: Int) = (this + (other - 1)) / other
 
-	@MangaSourceParser("MANGAFIRE_EN", "MangaFire English", "en")
-	class English(context: MangaLoaderContext) : MangaFireParser(context, MangaParserSource.MANGAFIRE_EN, "en")
+    @MangaSourceParser("MANGAFIRE_EN", "MangaFire English", "en")
+    class English(context: MangaLoaderContext) : MangaFireParser(context, MangaParserSource.MANGAFIRE_EN, "en")
 
-	@MangaSourceParser("MANGAFIRE_ES", "MangaFire Spanish", "es")
-	class Spanish(context: MangaLoaderContext) : MangaFireParser(context, MangaParserSource.MANGAFIRE_ES, "es")
+    @MangaSourceParser("MANGAFIRE_ES", "MangaFire Spanish", "es")
+    class Spanish(context: MangaLoaderContext) : MangaFireParser(context, MangaParserSource.MANGAFIRE_ES, "es")
 
-	@MangaSourceParser("MANGAFIRE_ESLA", "MangaFire Spanish (Latim)", "es")
-	class SpanishLatim(context: MangaLoaderContext) :
-		MangaFireParser(context, MangaParserSource.MANGAFIRE_ESLA, "es-la")
+    @MangaSourceParser("MANGAFIRE_ESLA", "MangaFire Spanish (Latim)", "es")
+    class SpanishLatim(context: MangaLoaderContext) :
+        MangaFireParser(context, MangaParserSource.MANGAFIRE_ESLA, "es-la")
 
-	@MangaSourceParser("MANGAFIRE_FR", "MangaFire French", "fr")
-	class French(context: MangaLoaderContext) : MangaFireParser(context, MangaParserSource.MANGAFIRE_FR, "fr")
+    @MangaSourceParser("MANGAFIRE_FR", "MangaFire French", "fr")
+    class French(context: MangaLoaderContext) : MangaFireParser(context, MangaParserSource.MANGAFIRE_FR, "fr")
 
-	@MangaSourceParser("MANGAFIRE_JA", "MangaFire Japanese", "ja")
-	class Japanese(context: MangaLoaderContext) : MangaFireParser(context, MangaParserSource.MANGAFIRE_JA, "ja")
+    @MangaSourceParser("MANGAFIRE_JA", "MangaFire Japanese", "ja")
+    class Japanese(context: MangaLoaderContext) : MangaFireParser(context, MangaParserSource.MANGAFIRE_JA, "ja")
 
-	@MangaSourceParser("MANGAFIRE_PT", "MangaFire Portuguese", "pt")
-	class Portuguese(context: MangaLoaderContext) : MangaFireParser(context, MangaParserSource.MANGAFIRE_PT, "pt")
+    @MangaSourceParser("MANGAFIRE_PT", "MangaFire Portuguese", "pt")
+    class Portuguese(context: MangaLoaderContext) : MangaFireParser(context, MangaParserSource.MANGAFIRE_PT, "pt")
 
-	@MangaSourceParser("MANGAFIRE_PTBR", "MangaFire Portuguese (Brazil)", "pt")
-	class PortugueseBR(context: MangaLoaderContext) :
-		MangaFireParser(context, MangaParserSource.MANGAFIRE_PTBR, "pt-br")
+    @MangaSourceParser("MANGAFIRE_PTBR", "MangaFire Portuguese (Brazil)", "pt")
+    class PortugueseBR(context: MangaLoaderContext) :
+        MangaFireParser(context, MangaParserSource.MANGAFIRE_PTBR, "pt-br")
 }
 
 private object VrfGenerator {
@@ -681,7 +694,7 @@ private object VrfGenerator {
     )
 
     fun generate(input: String): String {
-        // Stage 0: normalize to URI-encoded bytes (like JavaScript encodeURIComponent)
+        // Stage 0: normalize to URI-encoded bytes (matches JavaScript encodeURIComponent)
         var bytes = input.urlEncoded().toByteArray()
         // RC4 1
         bytes = rc4(atob(rc4Keys["l"]!!), bytes)
