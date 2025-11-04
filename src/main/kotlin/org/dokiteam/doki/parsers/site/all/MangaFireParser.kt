@@ -73,36 +73,10 @@ internal abstract class MangaFireParser(
             .sslSocketFactory(SSLUtils.sslSocketFactory!!, SSLUtils.trustManager)
             .hostnameVerifier { _, _ -> true }
             .addInterceptor { chain ->
-                val request = chain.request()
+                val response = chain.proceed(request.newBuilder()
                 val newRequest = request.newBuilder()
-                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.43 Mobile Safari/537.36")
-                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
-                    .header("Accept-Language", "en-US,en;q=0.9")
-                    .header("Accept-Encoding", "gzip, deflate, br, zstd")
-                    .header("Referer", "https://$domain/")
-                    .header("Origin", "https://$domain")
-                    .header("DNT", "1")
-                    .header("Connection", "keep-alive")
-                    .header("Upgrade-Insecure-Requests", "1")
-                    .header("Sec-Fetch-Dest", "document")
-                    .header("Sec-Fetch-Mode", "navigate")
-                    .header("Sec-Fetch-Site", "same-origin")
-                    .header("Sec-Fetch-User", "?1")
-                    .header("Sec-CH-UA", "\"Chromium\";v=\"120\", \"Not_A Brand\";v=\"24\", \"Google Chrome\";v=\"120\"")
-                    .header("Sec-CH-UA-Mobile", "?1")
-                    .header("Sec-CH-UA-Platform", "\"Android\"")
-                    .header("Cache-Control", "no-cache")
-                    .header("Pragma", "no-cache")
+                    .addHeader("Referer", "https://$domain/")
                     .build()
-
-                val response = chain.proceed(newRequest)
-
-                // Check for CloudFlare protection
-                val protection = CloudFlareHelper.checkResponseForProtection(response)
-                if (protection != CloudFlareHelper.PROTECTION_NOT_DETECTED) {
-                    response.close()
-                    throw org.dokiteam.doki.parsers.exception.AuthRequiredException(source)
-                }
 
                 if (request.url.fragment?.startsWith("scrambled") == true) {
                     return@addInterceptor context.redrawImageResponse(response) { bitmap ->
@@ -217,8 +191,8 @@ internal abstract class MangaFireParser(
                     // Search format: /filter?keyword=eleceed&vrf=...
                     addQueryParameter("keyword", filter.query.trim())
 
-                    // Generate VRF for search query
-                    val searchVrf = VrfGenerator.generate(filter.query.trim())
+                    // Generate VRF for search query (preserve original case)
+                    val searchVrf = VrfGenerator.generate(filter.query)
                     addQueryParameter("vrf", searchVrf)
                 }
 
@@ -707,7 +681,8 @@ private object VrfGenerator {
     )
 
     fun generate(input: String): String {
-        var bytes = input.toByteArray()
+        // Stage 0: normalize to URI-encoded bytes (like JavaScript encodeURIComponent)
+        var bytes = input.urlEncoded().toByteArray()
         // RC4 1
         bytes = rc4(atob(rc4Keys["l"]!!), bytes)
 
