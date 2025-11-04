@@ -51,7 +51,7 @@ dependencies {
     implementation(libs.androidx.collection)
     api(libs.jsoup)
 
-    ksp(project(":kotatsu-parsers-ksp"))
+    ksp(project(":doki-ksp"))
 
     testImplementation(libs.junit.api)
     testImplementation(libs.junit.engine)
