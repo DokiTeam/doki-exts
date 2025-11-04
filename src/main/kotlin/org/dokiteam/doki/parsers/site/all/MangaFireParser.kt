@@ -75,17 +75,24 @@ internal abstract class MangaFireParser(
             .addInterceptor { chain ->
                 val request = chain.request()
                 val newRequest = request.newBuilder()
-                    .header("Referer", "https://$domain/")
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.43 Mobile Safari/537.36")
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
                     .header("Accept-Language", "en-US,en;q=0.9")
-                    .header("Accept-Encoding", "gzip, deflate, br")
+                    .header("Accept-Encoding", "gzip, deflate, br, zstd")
+                    .header("Referer", "https://$domain/")
+                    .header("Origin", "https://$domain")
+                    .header("DNT", "1")
                     .header("Connection", "keep-alive")
                     .header("Upgrade-Insecure-Requests", "1")
                     .header("Sec-Fetch-Dest", "document")
                     .header("Sec-Fetch-Mode", "navigate")
                     .header("Sec-Fetch-Site", "same-origin")
-                    .header("Cache-Control", "max-age=0")
+                    .header("Sec-Fetch-User", "?1")
+                    .header("Sec-CH-UA", "\"Chromium\";v=\"120\", \"Not_A Brand\";v=\"24\", \"Google Chrome\";v=\"120\"")
+                    .header("Sec-CH-UA-Mobile", "?1")
+                    .header("Sec-CH-UA-Platform", "\"Android\"")
+                    .header("Cache-Control", "no-cache")
+                    .header("Pragma", "no-cache")
                     .build()
 
                 val response = chain.proceed(newRequest)
@@ -205,37 +212,24 @@ internal abstract class MangaFireParser(
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
 		val url = "https://$domain/filter".toHttpUrl().newBuilder().apply {
-			addQueryParameter("page", page.toString())
-			// Set language filter - use filter.locale if provided, otherwise use default siteLang
-			val languageCode = filter.locale?.language ?: siteLang
-			addQueryParameter("language[]", languageCode)
-
             when {
                 !filter.query.isNullOrEmpty() -> {
-                    val encodedQuery = filter.query.splitByWhitespace().joinToString(separator = "+") { part ->
-                        part.urlEncoded()
-                    }
-                    addEncodedQueryParameter("keyword", encodedQuery)
+                    // Search format: /filter?keyword=eleceed&vrf=...
+                    addQueryParameter("keyword", filter.query.trim())
 
                     // Generate VRF for search query
                     val searchVrf = VrfGenerator.generate(filter.query.trim())
                     addQueryParameter("vrf", searchVrf)
-
-                    addQueryParameter(
-                        name = "sort",
-                        value = when (order) {
-                            SortOrder.UPDATED -> "recently_updated"
-                            SortOrder.POPULARITY -> "most_viewed"
-                            SortOrder.RATING -> "scores"
-                            SortOrder.NEWEST -> "release_date"
-                            SortOrder.ALPHABETICAL -> "title_az"
-                            SortOrder.RELEVANCE -> "most_relevance"
-                            else -> ""
-                        },
-                    )
                 }
 
 				else -> {
+					// Browse format: /filter?page=1&language[]=en&sort=recently_updated
+					addQueryParameter("page", page.toString())
+
+					// Set language filter - use filter.locale if provided, otherwise use default siteLang
+					val languageCode = filter.locale?.language ?: siteLang
+					addQueryParameter("language[]", languageCode)
+
 					filter.tagsExclude.forEach { tag ->
 						addQueryParameter("genre[]", "-${tag.key}")
 					}
@@ -259,8 +253,8 @@ internal abstract class MangaFireParser(
 						name = "sort",
 						value = when (order) {
 							SortOrder.UPDATED -> "recently_updated"
-							SortOrder.POPULARITY -> "most_viewed"
-							SortOrder.RATING -> "scores"
+							SortOrder.POPULARITY -> "total_views"
+							SortOrder.RATING -> "mal_score"
 							SortOrder.NEWEST -> "release_date"
 							SortOrder.ALPHABETICAL -> "title_az"
 							SortOrder.RELEVANCE -> "most_relevance"
