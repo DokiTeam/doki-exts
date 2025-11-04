@@ -14,12 +14,12 @@ import org.dokiteam.doki.parsers.util.json.getStringOrNull
 import java.text.SimpleDateFormat
 import java.util.*
 
-@Broken
+@Broken("Debugging")
 @MangaSourceParser("NHENTAIWORLD", "Nhentai World", "vi", ContentType.HENTAI)
 internal class NhentaiWorld(context: MangaLoaderContext) :
 	PagedMangaParser(context, MangaParserSource.NHENTAIWORLD, 24) {
 
-	override val configKeyDomain = ConfigKey.Domain("nhentaiworld-h1.art")
+	override val configKeyDomain = ConfigKey.Domain("nhentaiclub.icu")
 
 	override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
 		super.onCreateConfig(keys)
