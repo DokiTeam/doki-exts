@@ -75,17 +75,17 @@ internal abstract class MangaFireParser(
             .addInterceptor { chain ->
                 val request = chain.request()
                 val newRequest = request.newBuilder()
-                    .addHeader("Referer", "https://$domain/")
-                    .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                    .addHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
-                    .addHeader("Accept-Language", "en-US,en;q=0.9")
-                    .addHeader("Accept-Encoding", "gzip, deflate, br")
-                    .addHeader("Connection", "keep-alive")
-                    .addHeader("Upgrade-Insecure-Requests", "1")
-                    .addHeader("Sec-Fetch-Dest", "document")
-                    .addHeader("Sec-Fetch-Mode", "navigate")
-                    .addHeader("Sec-Fetch-Site", "same-origin")
-                    .addHeader("Cache-Control", "max-age=0")
+                    .header("Referer", "https://$domain/")
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
+                    .header("Accept-Language", "en-US,en;q=0.9")
+                    .header("Accept-Encoding", "gzip, deflate, br")
+                    .header("Connection", "keep-alive")
+                    .header("Upgrade-Insecure-Requests", "1")
+                    .header("Sec-Fetch-Dest", "document")
+                    .header("Sec-Fetch-Mode", "navigate")
+                    .header("Sec-Fetch-Site", "same-origin")
+                    .header("Cache-Control", "max-age=0")
                     .build()
 
                 val response = chain.proceed(newRequest)
@@ -206,7 +206,9 @@ internal abstract class MangaFireParser(
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
 		val url = "https://$domain/filter".toHttpUrl().newBuilder().apply {
 			addQueryParameter("page", page.toString())
-			addQueryParameter("language[]", siteLang)
+			// Set language filter - use filter.locale if provided, otherwise use default siteLang
+			val languageCode = filter.locale?.language ?: siteLang
+			addQueryParameter("language[]", languageCode)
 
             when {
                 !filter.query.isNullOrEmpty() -> {
@@ -239,9 +241,6 @@ internal abstract class MangaFireParser(
 					}
 					filter.tags.forEach { tag ->
 						addQueryParameter("genre[]", tag.key)
-					}
-					filter.locale?.let {
-						addQueryParameter("language[]", it.language)
 					}
 					filter.states.forEach { state ->
 						addQueryParameter(
@@ -299,7 +298,7 @@ internal abstract class MangaFireParser(
 	}
 
 	override suspend fun getDetails(manga: Manga): Manga {
-		val document = webClient.httpGet(manga.url.toAbsoluteUrl(domain)).parseHtml()
+		val document = client.httpGet(manga.url.toAbsoluteUrl(domain)).parseHtml()
 		val availableTags = tags.get()
 		var isAdult = false
 		var isSuggestive = false
