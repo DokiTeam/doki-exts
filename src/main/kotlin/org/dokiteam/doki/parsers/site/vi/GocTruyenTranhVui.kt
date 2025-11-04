@@ -14,30 +14,29 @@ import org.dokiteam.doki.parsers.model.*
 import org.dokiteam.doki.parsers.util.*
 import org.json.JSONObject
 import java.util.*
-import org.dokiteam.doki.parsers.Broken
 
-@Broken("Need to clean code + Testing")
 @MangaSourceParser("GOCTRUYENTRANHVUI", "Góc Truyện Tranh Vui", "vi")
-internal class GocTruyenTranhVui(context: MangaLoaderContext):
-	PagedMangaParser(context, MangaParserSource.GOCTRUYENTRANHVUI, 50) {
+internal class GocTruyenTranhVui(context: MangaLoaderContext) : PagedMangaParser(context, MangaParserSource.GOCTRUYENTRANHVUI, 50) {
 
 	override val configKeyDomain = ConfigKey.Domain("goctruyentranhvui17.com")
+	private val apiUrl by lazy { "https://$domain/api/v2" }
 
-	private val apiUrl = "https://$domain/api/v2"
 	private val requestMutex = Mutex()
 	private var lastRequestTime = 0L
 
-	override fun getRequestHeaders(): Headers = Headers.Builder()
-		.add("Authorization", TOKEN_KEY)
-		.add("Referer", "https://$domain/")
-		.add("X-Requested-With", "XMLHttpRequest")
-		.build()
+	private val apiHeaders by lazy {
+		Headers.Builder()
+			.add("Authorization", TOKEN_KEY)
+			.add("Referer", "https://$domain/")
+			.add("X-Requested-With", "XMLHttpRequest")
+			.build()
+	}
 
 	override val availableSortOrders: Set<SortOrder> = EnumSet.of(
 		SortOrder.UPDATED,
 		SortOrder.POPULARITY,
 		SortOrder.NEWEST,
-		SortOrder.RATING,
+		SortOrder.RATING
 	)
 
 	override val filterCapabilities = MangaListFilterCapabilities(
@@ -47,18 +46,14 @@ internal class GocTruyenTranhVui(context: MangaLoaderContext):
 
 	override suspend fun getFilterOptions() = MangaListFilterOptions(
 		availableTags = availableTags(),
-		availableStates = EnumSet.of(MangaState.ONGOING, MangaState.FINISHED),
+		availableStates = EnumSet.of(MangaState.ONGOING, MangaState.FINISHED)
 	)
-
-	init {
-		setFirstPage(0)
-	}
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
 		enforceRateLimit()
 		val url = buildString {
 			append(apiUrl)
-			append("/search?p=$page")
+			append("/search?p=${page - 1}")
 			if (!filter.query.isNullOrBlank()) {
 				append("&searchValue=${filter.query.urlEncoded()}")
 			}
@@ -83,7 +78,7 @@ internal class GocTruyenTranhVui(context: MangaLoaderContext):
 			}
 		}
 
-		val json = webClient.httpGet(url).parseJson()
+		val json = webClient.httpGet(url, extraHeaders = apiHeaders).parseJson()
 		val result = json.optJSONObject("result") ?: return emptyList()
 		val data = result.optJSONArray("data") ?: return emptyList()
 
@@ -129,7 +124,7 @@ internal class GocTruyenTranhVui(context: MangaLoaderContext):
 		val chapters = try {
 			enforceRateLimit()
 			val chapterApiUrl = "https://$domain/api/comic/$comicId/chapter?limit=-1"
-			val chapterJson = webClient.httpGet(chapterApiUrl).parseJson()
+			val chapterJson = webClient.httpGet(chapterApiUrl, extraHeaders = apiHeaders).parseJson()
 			val chaptersData = chapterJson.getJSONObject("result").getJSONArray("chapters")
 
 			List(chaptersData.length()) { i ->
@@ -205,19 +200,14 @@ internal class GocTruyenTranhVui(context: MangaLoaderContext):
 				"nameEn" to nameEn
 			)
 			val authApiUrl = "$apiUrl/chapter/auth".toHttpUrl()
-			val authResponse = webClient.httpPost(url = authApiUrl, form = formBody).parseJson()
+			val authResponse = webClient.httpPost(url = authApiUrl, form = formBody, extraHeaders = apiHeaders).parseJson()
 			val data = authResponse.getJSONObject("result").getJSONArray("data")
 			imageUrls = List(data.length()) { i -> data.getString(i) }
 		}
 
 		return imageUrls.map { url ->
 			val finalUrl = if (url.startsWith("/image/")) "https://$domain$url" else url
-			MangaPage(
-				id = generateUid(finalUrl),
-				url = finalUrl,
-				preview = null,
-				source = source
-			)
+			MangaPage(id = generateUid(finalUrl), url = finalUrl, preview = null, source = source)
 		}
 	}
 
@@ -225,7 +215,7 @@ internal class GocTruyenTranhVui(context: MangaLoaderContext):
 		requestMutex.withLock {
 			val currentTime = System.currentTimeMillis()
 			val timeSinceLastRequest = currentTime - lastRequestTime
-			if (timeSinceLastRequest < REQUEST_DELAY_MS) {
+			if (timeSinceLastRequest < REQUEST_DELAY_MS) { // Vẫn truy cập được REQUEST_DELAY_MS
 				delay(REQUEST_DELAY_MS - timeSinceLastRequest)
 			}
 			lastRequestTime = System.currentTimeMillis()
@@ -277,7 +267,7 @@ internal class GocTruyenTranhVui(context: MangaLoaderContext):
 		MangaTag("Gender Bender", "GDB", source),
 		MangaTag("Murim", "MRR", source),
 		MangaTag("Leo Tháp", "LTT", source),
-		MangaTag("Nấu Ăn", "COO", source),
+		MangaTag("Nấu Ăn", "COO", source)
 	)
 
 	companion object {
