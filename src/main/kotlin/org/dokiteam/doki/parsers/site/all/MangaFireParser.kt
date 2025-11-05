@@ -190,26 +190,132 @@ internal abstract class MangaFireParser(
 
     /**
      * Extract VRF token using WebView for search queries
-     * This replaces the algorithmic VrfGenerator with actual token capture
+     * This uses doki-exts WebView integration to capture actual VRF tokens
      */
     private suspend fun extractSearchVrf(query: String): String {
         // Check cache first
         vrfCache[query]?.let { return it }
 
+        // Escape query string for safe JavaScript injection
+        val escapedQuery = query.replace("\\", "\\\\")
+            .replace("'", "\\'")
+            .replace("\"", "\\\"")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+
         val script = """
-            $(function() {
-              setInterval(() => {
-                $(".search-inner input[name=keyword]").val("$query").trigger("keyup");
-              }, 1000);
+            new Promise((resolve, reject) => {
+                let capturedVrf = null;
+                let searchTriggered = false;
+
+                // Override XMLHttpRequest to capture AJAX calls
+                const originalOpen = XMLHttpRequest.prototype.open;
+                XMLHttpRequest.prototype.open = function(method, url) {
+                    console.log('AJAX call detected:', url);
+                    if (url.includes('ajax/manga/search') && url.includes('vrf=')) {
+                        try {
+                            const urlObj = new URL(url, window.location.origin);
+                            capturedVrf = urlObj.searchParams.get('vrf');
+                            console.log('Captured VRF from search:', capturedVrf);
+                            if (capturedVrf && capturedVrf.length > 0) {
+                                resolve(capturedVrf);
+                                return originalOpen.apply(this, arguments);
+                            }
+                        } catch (e) {
+                            console.error('Error parsing URL:', e);
+                        }
+                    }
+                    return originalOpen.apply(this, arguments);
+                };
+
+                // Override fetch as well
+                const originalFetch = window.fetch;
+                window.fetch = function(url, options) {
+                    if (typeof url === 'string' && url.includes('ajax/manga/search') && url.includes('vrf=')) {
+                        try {
+                            const urlObj = new URL(url, window.location.origin);
+                            capturedVrf = urlObj.searchParams.get('vrf');
+                            console.log('Captured VRF from search fetch:', capturedVrf);
+                            if (capturedVrf && capturedVrf.length > 0) {
+                                resolve(capturedVrf);
+                            }
+                        } catch (e) {
+                            console.error('Error parsing fetch URL:', e);
+                        }
+                    }
+                    return originalFetch.apply(this, arguments);
+                };
+
+                // Wait for page load, then trigger search
+                function triggerSearch() {
+                    if (searchTriggered) return;
+                    searchTriggered = true;
+
+                    console.log('Triggering search for: $escapedQuery');
+
+                    // Try multiple selectors for the search input
+                    const selectors = [
+                        '.search-inner input[name=keyword]',
+                        'input[name=keyword]',
+                        '#keyword',
+                        '.search input',
+                        'input[placeholder*="search"]'
+                    ];
+
+                    let searchInput = null;
+                    for (const selector of selectors) {
+                        searchInput = document.querySelector(selector);
+                        if (searchInput) break;
+                    }
+
+                    if (searchInput) {
+                        console.log('Found search input:', searchInput);
+                        searchInput.focus();
+                        searchInput.value = '$escapedQuery';
+
+                        // Trigger multiple events to ensure search is activated
+                        ['input', 'keyup', 'change', 'blur'].forEach(eventType => {
+                            searchInput.dispatchEvent(new Event(eventType, { bubbles: true }));
+                        });
+
+                        // Also try typing simulation
+                        setTimeout(() => {
+                            searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+                        }, 100);
+
+                        console.log('Search events dispatched');
+                    } else {
+                        console.error('Search input not found');
+                        // Try to navigate to search page directly
+                        const searchUrl = '/filter?keyword=' + encodeURIComponent('$escapedQuery');
+                        window.location.href = searchUrl;
+                    }
+                }
+
+                // Set up timeout as fallback
+                const timeoutId = setTimeout(() => {
+                    console.log('Search VRF timeout reached, captured:', capturedVrf);
+                    if (capturedVrf && capturedVrf.length > 0) {
+                        resolve(capturedVrf);
+                    } else {
+                        reject(new Error('Failed to capture VRF token within timeout'));
+                    }
+                }, 10000);
+
+                // Start the process
+                if (document.readyState === 'complete') {
+                    setTimeout(triggerSearch, 500);
+                } else {
+                    window.addEventListener('load', () => {
+                        setTimeout(triggerSearch, 500);
+                    });
+                }
             });
         """.trimIndent()
 
-        val capturedUrl = context.evaluateJs("https://$domain/home", script)
-            ?: throw Exception("Failed to capture search request")
-
-        val vrf = capturedUrl.toHttpUrl().queryParameter("vrf")
-            ?.takeIf { it.isNotBlank() }
-            ?: throw Exception("Unable to find vrf token")
+        val vrf = context.evaluateJs("https://$domain/home", script)
+            ?.takeIf { it.isNotBlank() && it != "null" && it != "{}" }
+            ?: throw Exception("Unable to find search vrf token for query: $query")
 
         // Cache the VRF token
         vrfCache[query] = vrf
@@ -218,42 +324,137 @@ internal abstract class MangaFireParser(
 
     /**
      * Extract VRF token for chapter/page loading using WebView
+     * This loads a chapter page and captures the AJAX request VRF
      */
     private suspend fun extractReadVrf(mangaId: String, type: String, langCode: String): String {
         val cacheKey = "$mangaId@$type@$langCode"
         vrfCache[cacheKey]?.let { return it }
 
+        // Use a real manga URL to trigger AJAX calls
+        val chapterUrl = "https://$domain/manga/$mangaId"
+
         val script = """
-            new Promise(resolve => {
-                let capturedUrl = null;
+            new Promise((resolve, reject) => {
+                let capturedVrf = null;
+                let interactionTriggered = false;
+
+                console.log('Starting VRF extraction for type: $type, lang: $langCode');
 
                 // Override XMLHttpRequest to capture AJAX calls
                 const originalOpen = XMLHttpRequest.prototype.open;
                 XMLHttpRequest.prototype.open = function(method, url) {
-                    if (url.includes('ajax/read') && url.includes('vrf=')) {
-                        capturedUrl = url;
-                        resolve(capturedUrl);
+                    console.log('AJAX call detected:', url);
+                    if ((url.includes('ajax/read') || url.includes('ajax/manga')) && url.includes('vrf=')) {
+                        try {
+                            const urlObj = new URL(url, window.location.origin);
+                            capturedVrf = urlObj.searchParams.get('vrf');
+                            console.log('Captured VRF from read/manga:', capturedVrf);
+                            if (capturedVrf && capturedVrf.length > 0) {
+                                resolve(capturedVrf);
+                                return originalOpen.apply(this, arguments);
+                            }
+                        } catch (e) {
+                            console.error('Error parsing URL:', e);
+                        }
                     }
                     return originalOpen.apply(this, arguments);
                 };
 
-                // Wait for page load and any AJAX requests
+                // Override fetch as well in case site uses fetch
+                const originalFetch = window.fetch;
+                window.fetch = function(url, options) {
+                    if (typeof url === 'string' && (url.includes('ajax/read') || url.includes('ajax/manga')) && url.includes('vrf=')) {
+                        try {
+                            const urlObj = new URL(url, window.location.origin);
+                            capturedVrf = urlObj.searchParams.get('vrf');
+                            console.log('Captured VRF from read/manga fetch:', capturedVrf);
+                            if (capturedVrf && capturedVrf.length > 0) {
+                                resolve(capturedVrf);
+                            }
+                        } catch (e) {
+                            console.error('Error parsing fetch URL:', e);
+                        }
+                    }
+                    return originalFetch.apply(this, arguments);
+                };
+
+                // Wait for page load and try to trigger chapter loading
+                function waitForChapterData() {
+                    if (interactionTriggered) return;
+                    interactionTriggered = true;
+
+                    console.log('Looking for chapter elements...');
+
+                    // Multiple strategies to trigger AJAX calls
+                    const strategies = [
+                        // Strategy 1: Click on language/type tabs
+                        () => {
+                            const langElements = document.querySelectorAll('.chapvol-tab a, .list-menu .dropdown-item');
+                            console.log('Found language elements:', langElements.length);
+
+                            langElements.forEach(element => {
+                                const dataCode = element.getAttribute('data-code');
+                                const dataName = element.getAttribute('data-name');
+                                console.log('Element data-code:', dataCode, 'data-name:', dataName);
+
+                                if (dataCode === '$langCode' || dataName === '$type') {
+                                    console.log('Clicking element:', element);
+                                    element.click();
+                                }
+                            });
+                        },
+                        // Strategy 2: Try to access chapter list directly
+                        () => {
+                            // Look for any buttons or links that might load chapters
+                            const chapterButtons = document.querySelectorAll('button, a, .btn, .tab-pane');
+                            chapterButtons.forEach(button => {
+                                const text = button.textContent || '';
+                                if (text.toLowerCase().includes('chapter') || text.toLowerCase().includes('read')) {
+                                    console.log('Clicking potential chapter button:', button);
+                                    button.click();
+                                }
+                            });
+                        },
+                        // Strategy 3: Try dropdown menus
+                        () => {
+                            const dropdowns = document.querySelectorAll('.dropdown-toggle, .dropdown button');
+                            dropdowns.forEach(dropdown => {
+                                console.log('Clicking dropdown:', dropdown);
+                                dropdown.click();
+                            });
+                        }
+                    ];
+
+                    // Execute strategies with delays
+                    strategies.forEach((strategy, index) => {
+                        setTimeout(strategy, index * 1000);
+                    });
+                }
+
+                // Set up timeout as fallback
+                const timeoutId = setTimeout(() => {
+                    console.log('Read VRF timeout reached, captured:', capturedVrf);
+                    if (capturedVrf && capturedVrf.length > 0) {
+                        resolve(capturedVrf);
+                    } else {
+                        reject(new Error('Failed to capture read VRF token within timeout for ' + '$cacheKey'));
+                    }
+                }, 15000);
+
+                // Start the process
                 if (document.readyState === 'complete') {
-                    setTimeout(() => resolve(capturedUrl), 3000);
+                    setTimeout(waitForChapterData, 1000);
                 } else {
                     window.addEventListener('load', () => {
-                        setTimeout(() => resolve(capturedUrl), 3000);
+                        setTimeout(waitForChapterData, 1000);
                     });
                 }
             });
         """.trimIndent()
 
-        val chapterUrl = "https://$domain/manga/test.123" // Use a dummy manga page to trigger AJAX
-        val capturedUrl = context.evaluateJs(chapterUrl, script)
-            ?: throw Exception("Failed to capture read request")
-
-        val vrf = capturedUrl.toHttpUrl().queryParameter("vrf")
-            ?: throw Exception("Unable to find read vrf token")
+        val vrf = context.evaluateJs(chapterUrl, script)
+            ?.takeIf { it.isNotBlank() && it != "null" && it != "{}" }
+            ?: throw Exception("Unable to find read vrf token for $cacheKey")
 
         // Cache the VRF token
         vrfCache[cacheKey] = vrf
