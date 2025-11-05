@@ -200,8 +200,8 @@ internal abstract class MangaFireParser(
      * Pattern: /ajax/read/{mangaId}/{type}/{lang}?vrf=xxx
      */
     private suspend fun extractChapterListVrf(mangaId: String, type: String, langCode: String): String {
-        // Try chapter 1 first as it's most likely to exist
-        val chapterOptions = listOf("1", "01", "001")
+        // Try chapter 1 first (most likely to exist) with optimized performance
+        val chapterOptions = listOf("1", "01") // Reduced from 3 to 2 options for faster loading
 
         for (chapterNum in chapterOptions) {
             try {
@@ -215,10 +215,11 @@ internal abstract class MangaFireParser(
                 println("🔧 Using mangaId part '$mangaIdPart' for AJAX pattern matching (from full '$mangaId')")
 
                 // Capture URLs specifically for this manga's chapter listing pattern
+                // PERFORMANCE OPTIMIZATION: Reduced timeout from 15s to 5s
                 val vrfUrls = context.captureWebViewUrls(
                     pageUrl = chapterUrl,
                     urlPattern = Regex("/ajax/read/$mangaIdPart/$type/$langCode\\?vrf=([^&]+)"),
-                    timeout = 15000L
+                    timeout = 5000L
                 )
 
                 println("📡 Captured ${vrfUrls.size} URLs matching chapter list VRF pattern for $mangaId")
@@ -234,11 +235,11 @@ internal abstract class MangaFireParser(
                     return vrf
                 }
 
-                // Fallback: try broader pattern matching
+                // PERFORMANCE OPTIMIZATION: Reduced fallback timeout from 10s to 3s
                 val fallbackUrls = context.captureWebViewUrls(
                     pageUrl = chapterUrl,
                     urlPattern = Regex("/ajax/read/[^/]+/$type/$langCode\\?vrf=([^&]+)"),
-                    timeout = 10000L
+                    timeout = 3000L
                 )
 
                 val fallbackVrf = fallbackUrls.firstNotNullOfOrNull { url ->
@@ -271,10 +272,11 @@ internal abstract class MangaFireParser(
             println("🔍 Extracting chapter images VRF for chapter $chapterId from chapter page: $chapterUrl")
 
             // Capture URLs specifically for this chapter's images pattern
+            // PERFORMANCE OPTIMIZATION: Reduced timeout from 15s to 4s
             val vrfUrls = context.captureWebViewUrls(
                 pageUrl = chapterUrl,
                 urlPattern = Regex("/ajax/read/chapter/$chapterId\\?vrf=([^&]+)"),
-                timeout = 15000L
+                timeout = 4000L
             )
 
             println("📡 Captured ${vrfUrls.size} URLs matching chapter images VRF pattern for $chapterId")
@@ -290,11 +292,11 @@ internal abstract class MangaFireParser(
                 return vrf
             }
 
-            // Fallback: try broader pattern matching
+            // PERFORMANCE OPTIMIZATION: Reduced fallback timeout from 10s to 2s
             val fallbackUrls = context.captureWebViewUrls(
                 pageUrl = chapterUrl,
                 urlPattern = Regex("/ajax/read/chapter/\\d+\\?vrf=([^&]+)"),
-                timeout = 10000L
+                timeout = 2000L
             )
 
             val fallbackVrf = fallbackUrls.firstNotNullOfOrNull { url ->
@@ -340,12 +342,9 @@ internal abstract class MangaFireParser(
                 require(chapterId != null && mangaId != null && type != null && langCode != null) {
                     "chapterId, mangaId, type, and langCode are required for chapter_images operation"
                 }
-                val cacheKey = "chapter_images_$chapterId"
-                vrfCache[cacheKey] ?: run {
-                    val vrf = extractChapterImagesVrf(chapterId, mangaId, type, langCode)
-                    vrfCache[cacheKey] = vrf
-                    vrf
-                }
+                // Don't cache chapter images VRF - each chapter needs its own unique token
+                val vrf = extractChapterImagesVrf(chapterId, mangaId, type, langCode)
+                vrf
             }
             "search" -> {
                 // For search operations - will implement a proper search VRF extraction later
