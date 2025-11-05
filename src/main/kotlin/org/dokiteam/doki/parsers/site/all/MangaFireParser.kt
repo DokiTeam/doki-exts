@@ -196,160 +196,93 @@ internal abstract class MangaFireParser(
     )
 
     /**
-     * Extract VRF token by loading a Blue Lock chapter page
-     * Simplified version that only uses Blue Lock for all VRF extraction
+     * Extract VRF token using the new WebView request interception API
+     * Uses Blue Lock chapters as reliable VRF source
      */
     private suspend fun extractVrfFromBlueLock(): String {
-        // Try fewer chapters to reduce crashes
-        val chapterOptions = listOf(1, 50, 100, 150) // Reduced range
+        // Try fewer chapters to reduce issues
+        val chapterOptions = listOf(1, 50, 100, 150)
 
         for (chapterNum in chapterOptions.shuffled()) {
             try {
                 val blueLockUrl = "https://$domain/read/blue-lockk.kw9j9/en/chapter-$chapterNum"
+                println("🔍 Attempting VRF extraction from Blue Lock chapter $chapterNum")
 
-                val script = """
-                    (function() {
-                        window.capturedVrf = null;
-                        window.vrfList = [];
-                        window.allRequests = [];
-
-                        console.log('🔍 Loading Blue Lock chapter $chapterNum to extract VRF...');
-
-                        // Override XMLHttpRequest to log ALL requests and capture VRF
-                        const originalOpen = XMLHttpRequest.prototype.open;
-                        XMLHttpRequest.prototype.open = function(method, url) {
-                            // Log EVERY request made
-                            console.log('📡 XHR REQUEST:', method, url);
-                            window.allRequests.push({type: 'XHR', method: method, url: url, timestamp: Date.now()});
-
-                            // Check if this is an AJAX request with VRF
-                            if (url.includes('/ajax/')) {
-                                console.log('🔍 AJAX request detected:', url);
-
-                                if (url.includes('vrf=')) {
-                                    console.log('🎯 VRF parameter found in URL:', url);
-                                    try {
-                                        const urlObj = new URL(url, window.location.origin);
-                                        const vrf = urlObj.searchParams.get('vrf');
-                                        console.log('🔑 Extracted VRF token:', vrf, '(length:', vrf ? vrf.length : 0, ')');
-
-                                        if (vrf && vrf.length > 10) { // Ensure it's a real VRF token
-                                            window.capturedVrf = vrf;
-                                            window.vrfList.push(vrf);
-                                            console.log('✅ VRF captured from Blue Lock chapter $chapterNum:', vrf);
-                                            console.log('📊 Total VRFs captured:', window.vrfList.length);
-                                        } else {
-                                            console.log('⚠️ VRF token too short or invalid:', vrf);
-                                        }
-                                    } catch (e) {
-                                        console.error('❌ Error parsing VRF URL:', e);
-                                    }
-                                } else {
-                                    console.log('❌ No VRF parameter in AJAX URL:', url);
-                                }
-                            }
-                            return originalOpen.apply(this, arguments);
-                        };
-
-                        // Override fetch to log ALL fetch requests
-                        const originalFetch = window.fetch;
-                        window.fetch = function(url, options) {
-                            console.log('📡 FETCH REQUEST:', url);
-                            window.allRequests.push({type: 'FETCH', url: url, timestamp: Date.now()});
-
-                            if (typeof url === 'string') {
-                                if (url.includes('/ajax/')) {
-                                    console.log('🔍 AJAX fetch detected:', url);
-
-                                    if (url.includes('vrf=')) {
-                                        console.log('🎯 VRF parameter found in fetch URL:', url);
-                                        try {
-                                            const urlObj = new URL(url, window.location.origin);
-                                            const vrf = urlObj.searchParams.get('vrf');
-                                            console.log('🔑 Extracted VRF token from fetch:', vrf, '(length:', vrf ? vrf.length : 0, ')');
-
-                                            if (vrf && vrf.length > 10) {
-                                                window.capturedVrf = vrf;
-                                                window.vrfList.push(vrf);
-                                                console.log('✅ VRF captured from fetch:', vrf);
-                                            } else {
-                                                console.log('⚠️ VRF token too short or invalid from fetch:', vrf);
-                                            }
-                                        } catch (e) {
-                                            console.error('❌ Error parsing fetch VRF URL:', e);
-                                        }
-                                    } else {
-                                        console.log('❌ No VRF parameter in AJAX fetch URL:', url);
-                                    }
-                                }
-                            }
-                            return originalFetch.apply(this, arguments);
-                        };
-
-                        // Log page load status and wait for natural AJAX calls
-                        console.log('📄 Page readyState:', document.readyState);
-                        console.log('🌍 Current URL:', window.location.href);
-                        console.log('⏳ Waiting for natural AJAX calls to occur...');
-
-                        // Verify our overrides are installed
-                        console.log('🔧 XMLHttpRequest.prototype.open override installed:', typeof XMLHttpRequest.prototype.open === 'function');
-                        console.log('🔧 window.fetch override installed:', typeof window.fetch === 'function');
-
-                        return 'vrf_extraction_started_chapter_$chapterNum';
-                    })();
-                """.trimIndent()
-
-                // Load Blue Lock chapter and extract VRF with crash prevention
-                var vrf: String? = null
-
+                // Method 1: Try the simplified VRF extraction API
                 try {
-                    context.evaluateJs(blueLockUrl, script)
-
-                    // Wait a bit for page to load before polling
-                    delay(2000)
-
-                    // Poll for VRF capture with shorter timeout to prevent crashes
-                    val checkScript = """
-                        window.capturedVrf || null;
-                    """.trimIndent()
-
-                    var attempts = 0
-                    val maxAttempts = 6 // Further reduced to prevent crashes
-
-                    while (vrf == null && attempts < maxAttempts) {
-                        try {
-                            vrf = context.evaluateJs(blueLockUrl, checkScript)
-                                ?.takeIf { it.isNotBlank() && it != "null" && it != "{}" && it.length > 10 }
-                        } catch (jsError: Exception) {
-                            println("⚠️ JavaScript evaluation error: ${jsError.message}")
-                            break // Exit on JS errors to prevent crashes
-                        }
-
-                        if (vrf == null) {
-                            delay(1000)
-                            attempts++
-                        }
+                    val vrfToken = context.extractVrfToken(blueLockUrl, timeout = 15000L)
+                    if (vrfToken != null) {
+                        println("✅ VRF extracted via simplified API: ${vrfToken.take(10)}...")
+                        return vrfToken
+                    } else {
+                        println("⚠️ Simplified API returned null")
                     }
-                } catch (webViewError: Exception) {
-                    println("⚠️ WebView error for chapter $chapterNum: ${webViewError.message}")
-                    continue // Skip this chapter and try next one
+                } catch (e: Exception) {
+                    println("⚠️ Simplified API failed: ${e.message}")
                 }
 
-                if (vrf != null) {
-                    return vrf // Success! Return the VRF
+                // Method 2: Fallback to regex-based URL capturing
+                try {
+                    val vrfUrls = context.captureWebViewUrls(
+                        pageUrl = blueLockUrl,
+                        urlPattern = Regex("/ajax/read/.*[?&]vrf=([^&]+)"),
+                        timeout = 15000L
+                    )
+
+                    println("📡 Captured ${vrfUrls.size} URLs matching VRF pattern")
+
+                    // Extract VRF token from captured URLs
+                    val vrf = vrfUrls.firstNotNullOfOrNull { url ->
+                        Regex("[?&]vrf=([^&]+)").find(url)?.groupValues?.get(1)
+                    }
+
+                    if (vrf != null) {
+                        println("✅ VRF extracted via URL capture: ${vrf.take(10)}...")
+                        return vrf
+                    } else {
+                        println("⚠️ No VRF found in captured URLs")
+                    }
+                } catch (e: Exception) {
+                    println("⚠️ URL capture failed: ${e.message}")
                 }
+
+                // Method 3: Advanced request interception with custom filtering
+                try {
+                    val interceptedRequests = context.interceptWebViewRequests(
+                        url = blueLockUrl,
+                        interceptorScript = """
+                            return request.url.includes('/ajax/read/') &&
+                                   request.url.includes('vrf=') &&
+                                   request.method === 'GET';
+                        """.trimIndent(),
+                        timeout = 15000L
+                    )
+
+                    println("🕸️ Intercepted ${interceptedRequests.size} AJAX requests")
+
+                    // Extract VRF from intercepted requests
+                    val interceptedVrf = interceptedRequests.firstNotNullOfOrNull { request ->
+                        request.getQueryParameter("vrf")
+                    }
+
+                    if (interceptedVrf != null) {
+                        println("✅ VRF extracted via request interception: ${interceptedVrf.take(10)}...")
+                        return interceptedVrf
+                    } else {
+                        println("⚠️ No VRF found in intercepted requests")
+                    }
+                } catch (e: Exception) {
+                    println("⚠️ Request interception failed: ${e.message}")
+                }
+
+                println("❌ All VRF extraction methods failed for chapter $chapterNum")
 
             } catch (e: Exception) {
-                // Log error and try next chapter
                 println("❌ Blue Lock chapter $chapterNum failed: ${e.message}")
-
-                // Add cooldown between chapter attempts to prevent WebView overload
-                delay(3000)
+                // Add small delay between attempts
+                delay(2000)
                 continue
             }
-
-            // Add delay between attempts even on success/failure to prevent crashes
-            delay(2000)
         }
 
         throw Exception("Unable to extract VRF from any Blue Lock chapter after trying ${chapterOptions.size} chapters")
