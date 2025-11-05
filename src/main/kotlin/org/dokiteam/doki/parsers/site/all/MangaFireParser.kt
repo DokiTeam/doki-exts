@@ -196,133 +196,152 @@ internal abstract class MangaFireParser(
     )
 
     /**
-     * Extract VRF token using the new WebView request interception API
-     * Uses Blue Lock chapters as reliable VRF source
+     * Extract VRF token for chapter listings from the actual manga page
+     * Pattern: /ajax/read/{mangaId}/{type}/{lang}?vrf=xxx
      */
-    private suspend fun extractVrfFromBlueLock(): String {
-        // Try fewer chapters to reduce issues
-        val chapterOptions = listOf(1, 50, 100, 150)
+    private suspend fun extractChapterListVrf(mangaId: String, type: String, langCode: String): String {
+        try {
+            // Load the actual manga page to extract VRF
+            val mangaUrl = "https://$domain/manga/$mangaId"
+            println("🔍 Extracting chapter list VRF for $mangaId/$type/$langCode from manga page")
 
-        for (chapterNum in chapterOptions.shuffled()) {
-            try {
-                val blueLockUrl = "https://$domain/read/blue-lockk.kw9j9/en/chapter-$chapterNum"
-                println("🔍 Attempting VRF extraction from Blue Lock chapter $chapterNum")
+            // Capture URLs specifically for this manga's chapter listing pattern
+            val vrfUrls = context.captureWebViewUrls(
+                pageUrl = mangaUrl,
+                urlPattern = Regex("/ajax/read/$mangaId/$type/$langCode\\?vrf=([^&]+)"),
+                timeout = 15000L
+            )
 
-                // Method 1: Try the simplified VRF extraction API
-                try {
-                    val vrfToken = context.extractVrfToken(blueLockUrl, timeout = 15000L)
-                    if (vrfToken != null) {
-                        println("✅ VRF extracted via simplified API: ${vrfToken.take(10)}...")
-                        return vrfToken
-                    } else {
-                        println("⚠️ Simplified API returned null")
-                    }
-                } catch (e: Exception) {
-                    println("⚠️ Simplified API failed: ${e.message}")
+            println("📡 Captured ${vrfUrls.size} URLs matching chapter list VRF pattern for $mangaId")
+
+            // Extract VRF token from captured URLs
+            val vrf = vrfUrls.firstNotNullOfOrNull { url ->
+                Regex("[?&]vrf=([^&]+)").find(url)?.groupValues?.get(1)
+            }
+
+            if (vrf != null) {
+                println("✅ Chapter list VRF extracted for $mangaId: ${vrf.take(10)}...")
+                return vrf
+            }
+
+            // Fallback: try broader pattern matching
+            val fallbackUrls = context.captureWebViewUrls(
+                pageUrl = mangaUrl,
+                urlPattern = Regex("/ajax/read/[^/]+/$type/$langCode\\?vrf=([^&]+)"),
+                timeout = 10000L
+            )
+
+            val fallbackVrf = fallbackUrls.firstNotNullOfOrNull { url ->
+                Regex("[?&]vrf=([^&]+)").find(url)?.groupValues?.get(1)
+            }
+
+            if (fallbackVrf != null) {
+                println("✅ Chapter list VRF extracted via fallback for $mangaId: ${fallbackVrf.take(10)}...")
+                return fallbackVrf
+            }
+
+        } catch (e: Exception) {
+            println("❌ Failed to extract chapter list VRF for $mangaId: ${e.message}")
+        }
+
+        throw Exception("Unable to extract chapter list VRF for $mangaId/$type/$langCode from manga page")
+    }
+
+    /**
+     * Extract VRF token for individual chapter images from the actual chapter page
+     * Pattern: /ajax/read/chapter/{chapterId}?vrf=xxx
+     */
+    private suspend fun extractChapterImagesVrf(chapterId: String, mangaId: String, type: String, langCode: String): String {
+        try {
+            // Load the actual chapter page to extract VRF
+            val chapterUrl = "https://$domain/read/$mangaId/$langCode/$type-$chapterId"
+            println("🔍 Extracting chapter images VRF for chapter $chapterId from chapter page: $chapterUrl")
+
+            // Capture URLs specifically for this chapter's images pattern
+            val vrfUrls = context.captureWebViewUrls(
+                pageUrl = chapterUrl,
+                urlPattern = Regex("/ajax/read/chapter/$chapterId\\?vrf=([^&]+)"),
+                timeout = 15000L
+            )
+
+            println("📡 Captured ${vrfUrls.size} URLs matching chapter images VRF pattern for $chapterId")
+
+            // Extract VRF token from captured URLs
+            val vrf = vrfUrls.firstNotNullOfOrNull { url ->
+                Regex("[?&]vrf=([^&]+)").find(url)?.groupValues?.get(1)
+            }
+
+            if (vrf != null) {
+                println("✅ Chapter images VRF extracted for $chapterId: ${vrf.take(10)}...")
+                return vrf
+            }
+
+            // Fallback: try broader pattern matching
+            val fallbackUrls = context.captureWebViewUrls(
+                pageUrl = chapterUrl,
+                urlPattern = Regex("/ajax/read/chapter/\\d+\\?vrf=([^&]+)"),
+                timeout = 10000L
+            )
+
+            val fallbackVrf = fallbackUrls.firstNotNullOfOrNull { url ->
+                Regex("[?&]vrf=([^&]+)").find(url)?.groupValues?.get(1)
+            }
+
+            if (fallbackVrf != null) {
+                println("✅ Chapter images VRF extracted via fallback for $chapterId: ${fallbackVrf.take(10)}...")
+                return fallbackVrf
+            }
+
+        } catch (e: Exception) {
+            println("❌ Failed to extract chapter images VRF for $chapterId: ${e.message}")
+        }
+
+        throw Exception("Unable to extract chapter images VRF for chapter $chapterId from chapter page")
+    }
+
+    /**
+     * Extract VRF token based on operation type
+     * Routes to appropriate specific VRF extraction method
+     */
+    private suspend fun extractVrfToken(
+        operation: String,
+        mangaId: String? = null,
+        type: String? = null,
+        langCode: String? = null,
+        chapterId: String? = null
+    ): String {
+        return when (operation) {
+            "chapter_list" -> {
+                require(mangaId != null && type != null && langCode != null) {
+                    "mangaId, type, and langCode are required for chapter_list operation"
                 }
-
-                // Method 2: Fallback to regex-based URL capturing
-                try {
-                    val vrfUrls = context.captureWebViewUrls(
-                        pageUrl = blueLockUrl,
-                        urlPattern = Regex("/ajax/read/.*[?&]vrf=([^&]+)"),
-                        timeout = 15000L
-                    )
-
-                    println("📡 Captured ${vrfUrls.size} URLs matching VRF pattern")
-
-                    // Extract VRF token from captured URLs
-                    val vrf = vrfUrls.firstNotNullOfOrNull { url ->
-                        Regex("[?&]vrf=([^&]+)").find(url)?.groupValues?.get(1)
-                    }
-
-                    if (vrf != null) {
-                        println("✅ VRF extracted via URL capture: ${vrf.take(10)}...")
-                        return vrf
-                    } else {
-                        println("⚠️ No VRF found in captured URLs")
-                    }
-                } catch (e: Exception) {
-                    println("⚠️ URL capture failed: ${e.message}")
+                val cacheKey = "chapter_list_${mangaId}_${type}_${langCode}"
+                vrfCache[cacheKey] ?: run {
+                    val vrf = extractChapterListVrf(mangaId, type, langCode)
+                    vrfCache[cacheKey] = vrf
+                    vrf
                 }
-
-                // Method 3: Advanced request interception with custom filtering
-                try {
-                    val interceptedRequests = context.interceptWebViewRequests(
-                        url = blueLockUrl,
-                        interceptorScript = """
-                            return request.url.includes('/ajax/read/') &&
-                                   request.url.includes('vrf=') &&
-                                   request.method === 'GET';
-                        """.trimIndent(),
-                        timeout = 15000L
-                    )
-
-                    println("🕸️ Intercepted ${interceptedRequests.size} AJAX requests")
-
-                    // Extract VRF from intercepted requests
-                    val interceptedVrf = interceptedRequests.firstNotNullOfOrNull { request ->
-                        request.getQueryParameter("vrf")
-                    }
-
-                    if (interceptedVrf != null) {
-                        println("✅ VRF extracted via request interception: ${interceptedVrf.take(10)}...")
-                        return interceptedVrf
-                    } else {
-                        println("⚠️ No VRF found in intercepted requests")
-                    }
-                } catch (e: Exception) {
-                    println("⚠️ Request interception failed: ${e.message}")
+            }
+            "chapter_images" -> {
+                require(chapterId != null && mangaId != null && type != null && langCode != null) {
+                    "chapterId, mangaId, type, and langCode are required for chapter_images operation"
                 }
-
-                println("❌ All VRF extraction methods failed for chapter $chapterNum")
-
-            } catch (e: Exception) {
-                println("❌ Blue Lock chapter $chapterNum failed: ${e.message}")
-                // Add small delay between attempts
-                delay(2000)
-                continue
+                val cacheKey = "chapter_images_$chapterId"
+                vrfCache[cacheKey] ?: run {
+                    val vrf = extractChapterImagesVrf(chapterId, mangaId, type, langCode)
+                    vrfCache[cacheKey] = vrf
+                    vrf
+                }
+            }
+            "search" -> {
+                // For search operations - will implement a proper search VRF extraction later
+                // For now, throw an exception to indicate this needs to be implemented
+                throw UnsupportedOperationException("Search VRF extraction not yet implemented - will be added later")
+            }
+            else -> {
+                throw IllegalArgumentException("Unknown VRF operation: $operation")
             }
         }
-
-        throw Exception("Unable to extract VRF from any Blue Lock chapter after trying ${chapterOptions.size} chapters")
-    }
-
-    /**
-     * Get or extract VRF token (reusable across operations)
-     */
-    private suspend fun getVrfToken(): String {
-        val currentTime = System.currentTimeMillis()
-
-        // Check if we have a valid global VRF
-        if (globalVrf != null && (currentTime - vrfTimestamp) < vrfValidityMs) {
-            return globalVrf!!
-        }
-
-        // Extract new VRF using Blue Lock
-        val vrf = extractVrfFromBlueLock()
-
-        // Cache globally
-        globalVrf = vrf
-        vrfTimestamp = currentTime
-
-        return vrf
-    }
-
-    /**
-     * Extract VRF token for any operation using Blue Lock only
-     * Simplified approach that uses Blue Lock for both search and read operations
-     */
-    private suspend fun extractVrfToken(operation: String = "general"): String {
-        // Check cache first
-        vrfCache[operation]?.let { return it }
-
-        // Get reusable VRF token from Blue Lock
-        val vrf = getVrfToken()
-
-        // Cache for this operation
-        vrfCache[operation] = vrf
-        return vrf
     }
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
@@ -337,9 +356,13 @@ internal abstract class MangaFireParser(
                     }
                     addEncodedQueryParameter("keyword", encodedQuery)
 
-                    // Use Blue Lock to extract VRF for search
-                    val searchVrf = extractVrfToken("search_${filter.query.trim()}")
-                    addQueryParameter("vrf", searchVrf)
+                    // TODO: Implement search-specific VRF extraction
+                    // For now, disable search functionality until search VRF pattern is implemented
+                    // val searchVrf = extractVrfToken("search")
+                    // addQueryParameter("vrf", searchVrf)
+
+                    // Temporary: Skip VRF for search until we implement the search pattern
+                    println("⚠️ Search VRF not yet implemented - search may not work")
 
                     addQueryParameter(
                         name = "sort",
@@ -501,7 +524,12 @@ internal abstract class MangaFireParser(
     }
 
     private suspend fun getChaptersBranch(mangaId: String, branch: ChapterBranch): List<MangaChapter> {
-        val readVrf = extractVrfToken("read_${mangaId}_${branch.type}_${branch.langCode}")
+        val readVrf = extractVrfToken(
+            operation = "chapter_list",
+            mangaId = mangaId,
+            type = branch.type,
+            langCode = branch.langCode
+        )
 
         val response = client
             .httpGet("https://$domain/ajax/read/$mangaId/${branch.type}/${branch.langCode}?vrf=$readVrf")
@@ -635,8 +663,19 @@ internal abstract class MangaFireParser(
         val chapterId = chapter.url.substringAfterLast('/')
         // Extract mangaId from chapter URL pattern: mangaId/type/lang/chapterId
         val urlParts = chapter.url.split('/')
+        require(urlParts.size >= 4) { "Invalid chapter URL format: ${chapter.url}" }
+
         val mangaId = urlParts[0]
-        val vrf = extractVrfToken("pages_${mangaId}_${chapterId}")
+        val type = urlParts[1]
+        val langCode = urlParts[2]
+
+        val vrf = extractVrfToken(
+            operation = "chapter_images",
+            chapterId = chapterId,
+            mangaId = mangaId,
+            type = type,
+            langCode = langCode
+        )
 
         val images = client
             .httpGet("https://$domain/ajax/read/chapter/$chapterId?vrf=$vrf")
