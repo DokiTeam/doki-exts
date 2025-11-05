@@ -196,55 +196,62 @@ internal abstract class MangaFireParser(
     )
 
     /**
-     * Extract VRF token for chapter listings from the actual manga page
+     * Extract VRF token for chapter listings from a chapter page (where VRF is actually generated)
      * Pattern: /ajax/read/{mangaId}/{type}/{lang}?vrf=xxx
      */
     private suspend fun extractChapterListVrf(mangaId: String, type: String, langCode: String): String {
-        try {
-            // Load the actual manga page to extract VRF
-            val mangaUrl = "https://$domain/manga/$mangaId"
-            println("🔍 Extracting chapter list VRF for $mangaId/$type/$langCode from manga page")
+        // Try chapter 1 first as it's most likely to exist
+        val chapterOptions = listOf("1", "01", "001")
 
-            // Capture URLs specifically for this manga's chapter listing pattern
-            val vrfUrls = context.captureWebViewUrls(
-                pageUrl = mangaUrl,
-                urlPattern = Regex("/ajax/read/$mangaId/$type/$langCode\\?vrf=([^&]+)"),
-                timeout = 15000L
-            )
+        for (chapterNum in chapterOptions) {
+            try {
+                // Load a chapter page where VRF tokens are actually generated
+                val chapterUrl = "https://$domain/read/$mangaId/$langCode/$type-$chapterNum"
+                println("🔍 Extracting chapter list VRF for $mangaId/$type/$langCode from chapter page: $chapterUrl")
 
-            println("📡 Captured ${vrfUrls.size} URLs matching chapter list VRF pattern for $mangaId")
+                // Capture URLs specifically for this manga's chapter listing pattern
+                val vrfUrls = context.captureWebViewUrls(
+                    pageUrl = chapterUrl,
+                    urlPattern = Regex("/ajax/read/$mangaId/$type/$langCode\\?vrf=([^&]+)"),
+                    timeout = 15000L
+                )
 
-            // Extract VRF token from captured URLs
-            val vrf = vrfUrls.firstNotNullOfOrNull { url ->
-                Regex("[?&]vrf=([^&]+)").find(url)?.groupValues?.get(1)
+                println("📡 Captured ${vrfUrls.size} URLs matching chapter list VRF pattern for $mangaId")
+                vrfUrls.forEach { url -> println("   🔗 Captured URL: $url") }
+
+                // Extract VRF token from captured URLs
+                val vrf = vrfUrls.firstNotNullOfOrNull { url ->
+                    Regex("[?&]vrf=([^&]+)").find(url)?.groupValues?.get(1)
+                }
+
+                if (vrf != null) {
+                    println("✅ Chapter list VRF extracted for $mangaId: ${vrf.take(10)}...")
+                    return vrf
+                }
+
+                // Fallback: try broader pattern matching
+                val fallbackUrls = context.captureWebViewUrls(
+                    pageUrl = chapterUrl,
+                    urlPattern = Regex("/ajax/read/[^/]+/$type/$langCode\\?vrf=([^&]+)"),
+                    timeout = 10000L
+                )
+
+                val fallbackVrf = fallbackUrls.firstNotNullOfOrNull { url ->
+                    Regex("[?&]vrf=([^&]+)").find(url)?.groupValues?.get(1)
+                }
+
+                if (fallbackVrf != null) {
+                    println("✅ Chapter list VRF extracted via fallback for $mangaId: ${fallbackVrf.take(10)}...")
+                    return fallbackVrf
+                }
+
+            } catch (e: Exception) {
+                println("❌ Failed to extract chapter list VRF from chapter $chapterNum for $mangaId: ${e.message}")
+                continue
             }
-
-            if (vrf != null) {
-                println("✅ Chapter list VRF extracted for $mangaId: ${vrf.take(10)}...")
-                return vrf
-            }
-
-            // Fallback: try broader pattern matching
-            val fallbackUrls = context.captureWebViewUrls(
-                pageUrl = mangaUrl,
-                urlPattern = Regex("/ajax/read/[^/]+/$type/$langCode\\?vrf=([^&]+)"),
-                timeout = 10000L
-            )
-
-            val fallbackVrf = fallbackUrls.firstNotNullOfOrNull { url ->
-                Regex("[?&]vrf=([^&]+)").find(url)?.groupValues?.get(1)
-            }
-
-            if (fallbackVrf != null) {
-                println("✅ Chapter list VRF extracted via fallback for $mangaId: ${fallbackVrf.take(10)}...")
-                return fallbackVrf
-            }
-
-        } catch (e: Exception) {
-            println("❌ Failed to extract chapter list VRF for $mangaId: ${e.message}")
         }
 
-        throw Exception("Unable to extract chapter list VRF for $mangaId/$type/$langCode from manga page")
+        throw Exception("Unable to extract chapter list VRF for $mangaId/$type/$langCode from chapter pages")
     }
 
     /**
@@ -265,6 +272,7 @@ internal abstract class MangaFireParser(
             )
 
             println("📡 Captured ${vrfUrls.size} URLs matching chapter images VRF pattern for $chapterId")
+            vrfUrls.forEach { url -> println("   🔗 Captured URL: $url") }
 
             // Extract VRF token from captured URLs
             val vrf = vrfUrls.firstNotNullOfOrNull { url ->
