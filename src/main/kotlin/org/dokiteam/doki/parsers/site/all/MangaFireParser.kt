@@ -68,15 +68,7 @@ internal abstract class MangaFireParser(
     private val siteLang: String,
 ) : PagedMangaParser(context, source, 30), Interceptor, MangaParserAuthProvider {
 
-    // VRF Cache to avoid multiple WebView calls
-    // VRF tokens appear to be session-based and reusable across operations
-    private val vrfCache = object : LinkedHashMap<String, String>() {
-        override fun removeEldestEntry(eldest: Map.Entry<String?, String?>?) = size > 50
-    }
-
-    // Global VRF token for session reuse
-    private var globalVrf: String? = null
-    private var vrfTimestamp: Long = 0
+    // VRF cache removed - each request gets its own unique token to prevent 403 errors
     private val vrfValidityMs = 12 * 60 * 60 * 1000L // 12 hours
 
     private val client: WebClient by lazy {
@@ -200,8 +192,8 @@ internal abstract class MangaFireParser(
      * Pattern: /ajax/read/{mangaId}/{type}/{lang}?vrf=xxx
      */
     private suspend fun extractChapterListVrf(mangaId: String, type: String, langCode: String): String {
-        // Try chapter 1 first (most likely to exist) with optimized performance
-        val chapterOptions = listOf("1", "01") // Reduced from 3 to 2 options for faster loading
+        // Try multiple chapter options in case chapter 1 doesn't exist
+        val chapterOptions = listOf("1", "01", "001", "0", "2", "02") // Try various chapter numbers
 
         for (chapterNum in chapterOptions) {
             try {
@@ -253,6 +245,7 @@ internal abstract class MangaFireParser(
 
             } catch (e: Exception) {
                 println("❌ Failed to extract chapter list VRF from chapter $chapterNum for $mangaId: ${e.message}")
+                // Continue trying other chapter numbers
                 continue
             }
         }
@@ -309,10 +302,10 @@ internal abstract class MangaFireParser(
             }
 
         } catch (e: Exception) {
-            println("❌ Failed to extract chapter images VRF for $chapterId: ${e.message}")
+            println("❌ Failed to extract chapter images VRF for chapter $chapterId from $chapterUrl: ${e.message}")
         }
 
-        throw Exception("Unable to extract chapter images VRF for chapter $chapterId from chapter page")
+        throw Exception("Unable to extract chapter images VRF for chapter $chapterId from chapter page: https://$domain/read/$mangaId/$langCode/$type-$chapterId")
     }
 
     /**
@@ -331,12 +324,9 @@ internal abstract class MangaFireParser(
                 require(mangaId != null && type != null && langCode != null) {
                     "mangaId, type, and langCode are required for chapter_list operation"
                 }
-                val cacheKey = "chapter_list_${mangaId}_${type}_${langCode}"
-                vrfCache[cacheKey] ?: run {
-                    val vrf = extractChapterListVrf(mangaId, type, langCode)
-                    vrfCache[cacheKey] = vrf
-                    vrf
-                }
+                // Don't cache chapter list VRF - each request needs its own unique token
+                val vrf = extractChapterListVrf(mangaId, type, langCode)
+                vrf
             }
             "chapter_images" -> {
                 require(chapterId != null && mangaId != null && type != null && langCode != null) {
