@@ -206,13 +206,18 @@ internal abstract class MangaFireParser(
         for (chapterNum in chapterOptions) {
             try {
                 // Load a chapter page where VRF tokens are actually generated
+                // Keep the full mangaId including the slug part (e.g., kkochi-samkin-jimseung.kx976)
                 val chapterUrl = "https://$domain/read/$mangaId/$langCode/$type-$chapterNum"
                 println("🔍 Extracting chapter list VRF for $mangaId/$type/$langCode from chapter page: $chapterUrl")
+
+                // Extract just the ID part from mangaId (e.g., "kx976" from "kkochi-samkin-jimseung.kx976")
+                val mangaIdPart = mangaId.substringAfterLast('.')
+                println("🔧 Using mangaId part '$mangaIdPart' for AJAX pattern matching (from full '$mangaId')")
 
                 // Capture URLs specifically for this manga's chapter listing pattern
                 val vrfUrls = context.captureWebViewUrls(
                     pageUrl = chapterUrl,
-                    urlPattern = Regex("/ajax/read/$mangaId/$type/$langCode\\?vrf=([^&]+)"),
+                    urlPattern = Regex("/ajax/read/$mangaIdPart/$type/$langCode\\?vrf=([^&]+)"),
                     timeout = 15000L
                 )
 
@@ -261,6 +266,7 @@ internal abstract class MangaFireParser(
     private suspend fun extractChapterImagesVrf(chapterId: String, mangaId: String, type: String, langCode: String): String {
         try {
             // Load the actual chapter page to extract VRF
+            // Keep the full mangaId including the slug part (e.g., kkochi-samkin-jimseung.kx976)
             val chapterUrl = "https://$domain/read/$mangaId/$langCode/$type-$chapterId"
             println("🔍 Extracting chapter images VRF for chapter $chapterId from chapter page: $chapterUrl")
 
@@ -520,12 +526,13 @@ internal abstract class MangaFireParser(
             it.langCode == siteLang && availableTypes.contains(it.type)
         }
 
-        val id = mangaUrl.substringAfterLast('.')
+        // Extract full manga identifier from URL (e.g., "kkochi-samkin-jimseung.kx976" from "/manga/kkochi-samkin-jimseung.kx976")
+        val fullMangaId = mangaUrl.substringAfterLast('/')
 
         return coroutineScope {
             langTypePairs.map {
                 async {
-                    getChaptersBranch(id, it)
+                    getChaptersBranch(fullMangaId, it)
                 }
             }.awaitAll().flatten()
         }
