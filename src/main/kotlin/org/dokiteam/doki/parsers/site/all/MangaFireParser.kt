@@ -67,6 +67,11 @@ internal abstract class MangaFireParser(
     private val siteLang: String,
 ) : PagedMangaParser(context, source, 30), Interceptor, MangaParserAuthProvider {
 
+    // VRF Cache to avoid multiple WebView calls for same queries
+    private val vrfCache = object : LinkedHashMap<String, String>() {
+        override fun removeEldestEntry(eldest: Map.Entry<String?, String?>?) = size > 20
+    }
+
     private val client: WebClient by lazy {
         val newHttpClient = context.httpClient.newBuilder()
             .sslSocketFactory(SSLUtils.sslSocketFactory!!, SSLUtils.trustManager)
@@ -183,6 +188,78 @@ internal abstract class MangaFireParser(
         ),
     )
 
+    /**
+     * Extract VRF token using WebView for search queries
+     * This replaces the algorithmic VrfGenerator with actual token capture
+     */
+    private suspend fun extractSearchVrf(query: String): String {
+        // Check cache first
+        vrfCache[query]?.let { return it }
+
+        val script = """
+            $(function() {
+              setInterval(() => {
+                $(".search-inner input[name=keyword]").val("$query").trigger("keyup");
+              }, 1000);
+            });
+        """.trimIndent()
+
+        val capturedUrl = context.evaluateJs("https://$domain/home", script)
+            ?: throw Exception("Failed to capture search request")
+
+        val vrf = capturedUrl.toHttpUrl().queryParameter("vrf")
+            ?.takeIf { it.isNotBlank() }
+            ?: throw Exception("Unable to find vrf token")
+
+        // Cache the VRF token
+        vrfCache[query] = vrf
+        return vrf
+    }
+
+    /**
+     * Extract VRF token for chapter/page loading using WebView
+     */
+    private suspend fun extractReadVrf(mangaId: String, type: String, langCode: String): String {
+        val cacheKey = "$mangaId@$type@$langCode"
+        vrfCache[cacheKey]?.let { return it }
+
+        val script = """
+            new Promise(resolve => {
+                let capturedUrl = null;
+
+                // Override XMLHttpRequest to capture AJAX calls
+                const originalOpen = XMLHttpRequest.prototype.open;
+                XMLHttpRequest.prototype.open = function(method, url) {
+                    if (url.includes('ajax/read') && url.includes('vrf=')) {
+                        capturedUrl = url;
+                        resolve(capturedUrl);
+                    }
+                    return originalOpen.apply(this, arguments);
+                };
+
+                // Wait for page load and any AJAX requests
+                if (document.readyState === 'complete') {
+                    setTimeout(() => resolve(capturedUrl), 3000);
+                } else {
+                    window.addEventListener('load', () => {
+                        setTimeout(() => resolve(capturedUrl), 3000);
+                    });
+                }
+            });
+        """.trimIndent()
+
+        val chapterUrl = "https://$domain/manga/test.123" // Use a dummy manga page to trigger AJAX
+        val capturedUrl = context.evaluateJs(chapterUrl, script)
+            ?: throw Exception("Failed to capture read request")
+
+        val vrf = capturedUrl.toHttpUrl().queryParameter("vrf")
+            ?: throw Exception("Unable to find read vrf token")
+
+        // Cache the VRF token
+        vrfCache[cacheKey] = vrf
+        return vrf
+    }
+
     override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
         val url = "https://$domain/filter".toHttpUrl().newBuilder().apply {
             addQueryParameter("page", page.toString())
@@ -195,8 +272,8 @@ internal abstract class MangaFireParser(
                     }
                     addEncodedQueryParameter("keyword", encodedQuery)
 
-                    // Generate VRF for search query
-                    val searchVrf = VrfGenerator.generate(filter.query.trim())
+                    // Use WebView to extract VRF for search
+                    val searchVrf = extractSearchVrf(filter.query.trim())
                     addQueryParameter("vrf", searchVrf)
 
                     addQueryParameter(
@@ -359,8 +436,7 @@ internal abstract class MangaFireParser(
     }
 
     private suspend fun getChaptersBranch(mangaId: String, branch: ChapterBranch): List<MangaChapter> {
-        val readVrfInput = "$mangaId@${branch.type}@${branch.langCode}"
-        val readVrf = VrfGenerator.generate(readVrfInput)
+        val readVrf = extractReadVrf(mangaId, branch.type, branch.langCode)
 
         val response = client
             .httpGet("https://$domain/ajax/read/$mangaId/${branch.type}/${branch.langCode}?vrf=$readVrf")
@@ -492,7 +568,10 @@ internal abstract class MangaFireParser(
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         val chapterId = chapter.url.substringAfterLast('/')
-        val vrf = VrfGenerator.generate("chapter@$chapterId")
+        // Extract mangaId from chapter URL pattern: mangaId/type/lang/chapterId
+        val urlParts = chapter.url.split('/')
+        val mangaId = urlParts[0]
+        val vrf = extractReadVrf(mangaId, "chapter", siteLang)
 
         val images = client
             .httpGet("https://$domain/ajax/read/chapter/$chapterId?vrf=$vrf")
@@ -551,6 +630,11 @@ internal abstract class MangaFireParser(
         MangaFireParser(context, MangaParserSource.MANGAFIRE_PTBR, "pt-br")
 }
 
+/*
+ * VrfGenerator - DEPRECATED
+ * Now using WebView-based VRF extraction instead of algorithmic generation
+ * Kept here as fallback reference but no longer used in the parser
+ */
 private object VrfGenerator {
     private fun atob(data: String): ByteArray = Base64.getDecoder().decode(data)
 
