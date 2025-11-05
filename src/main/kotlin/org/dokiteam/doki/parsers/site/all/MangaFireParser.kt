@@ -3,6 +3,7 @@ package org.dokiteam.doki.parsers.site.all
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import org.jsoup.Jsoup
@@ -190,7 +191,7 @@ internal abstract class MangaFireParser(
 
     /**
      * Extract VRF token using WebView for search queries
-     * This uses doki-exts WebView integration to capture actual VRF tokens
+     * Adapted from Tachiyomi MangaFire implementation with polling approach
      */
     private suspend fun extractSearchVrf(query: String): String {
         // Check cache first
@@ -204,118 +205,84 @@ internal abstract class MangaFireParser(
             .replace("\r", "\\r")
 
         val script = """
-            new Promise((resolve, reject) => {
-                let capturedVrf = null;
-                let searchTriggered = false;
+            (function() {
+                window.capturedVrf = null;
 
-                // Override XMLHttpRequest to capture AJAX calls
+                // Override XMLHttpRequest to capture VRF from AJAX calls
                 const originalOpen = XMLHttpRequest.prototype.open;
                 XMLHttpRequest.prototype.open = function(method, url) {
-                    console.log('AJAX call detected:', url);
                     if (url.includes('ajax/manga/search') && url.includes('vrf=')) {
                         try {
                             const urlObj = new URL(url, window.location.origin);
-                            capturedVrf = urlObj.searchParams.get('vrf');
-                            console.log('Captured VRF from search:', capturedVrf);
-                            if (capturedVrf && capturedVrf.length > 0) {
-                                resolve(capturedVrf);
-                                return originalOpen.apply(this, arguments);
+                            const vrf = urlObj.searchParams.get('vrf');
+                            if (vrf && vrf.length > 0) {
+                                window.capturedVrf = vrf;
+                                console.log('Captured search VRF:', vrf);
                             }
                         } catch (e) {
-                            console.error('Error parsing URL:', e);
+                            console.error('Error parsing search URL:', e);
                         }
                     }
                     return originalOpen.apply(this, arguments);
                 };
 
-                // Override fetch as well
-                const originalFetch = window.fetch;
-                window.fetch = function(url, options) {
-                    if (typeof url === 'string' && url.includes('ajax/manga/search') && url.includes('vrf=')) {
-                        try {
-                            const urlObj = new URL(url, window.location.origin);
-                            capturedVrf = urlObj.searchParams.get('vrf');
-                            console.log('Captured VRF from search fetch:', capturedVrf);
-                            if (capturedVrf && capturedVrf.length > 0) {
-                                resolve(capturedVrf);
-                            }
-                        } catch (e) {
-                            console.error('Error parsing fetch URL:', e);
-                        }
-                    }
-                    return originalFetch.apply(this, arguments);
-                };
-
-                // Wait for page load, then trigger search
-                function triggerSearch() {
-                    if (searchTriggered) return;
-                    searchTriggered = true;
-
-                    console.log('Triggering search for: $escapedQuery');
-
-                    // Try multiple selectors for the search input
-                    const selectors = [
-                        '.search-inner input[name=keyword]',
-                        'input[name=keyword]',
-                        '#keyword',
-                        '.search input',
-                        'input[placeholder*="search"]'
-                    ];
-
-                    let searchInput = null;
-                    for (const selector of selectors) {
-                        searchInput = document.querySelector(selector);
-                        if (searchInput) break;
-                    }
+                // Start polling for search trigger - similar to Tachiyomi approach
+                const pollInterval = setInterval(() => {
+                    const searchInput = document.querySelector('.search-inner input[name=keyword]') ||
+                                     document.querySelector('input[name=keyword]') ||
+                                     document.querySelector('#keyword') ||
+                                     document.querySelector('.search input');
 
                     if (searchInput) {
-                        console.log('Found search input:', searchInput);
-                        searchInput.focus();
+                        console.log('Triggering search for: $escapedQuery');
                         searchInput.value = '$escapedQuery';
 
-                        // Trigger multiple events to ensure search is activated
-                        ['input', 'keyup', 'change', 'blur'].forEach(eventType => {
-                            searchInput.dispatchEvent(new Event(eventType, { bubbles: true }));
-                        });
+                        // Trigger keyup event like Tachiyomi does
+                        const event = new Event('keyup', { bubbles: true });
+                        searchInput.dispatchEvent(event);
 
-                        // Also try typing simulation
-                        setTimeout(() => {
-                            searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-                        }, 100);
-
-                        console.log('Search events dispatched');
-                    } else {
-                        console.error('Search input not found');
-                        // Try to navigate to search page directly
-                        const searchUrl = '/filter?keyword=' + encodeURIComponent('$escapedQuery');
-                        window.location.href = searchUrl;
+                        // Also try input event
+                        const inputEvent = new Event('input', { bubbles: true });
+                        searchInput.dispatchEvent(inputEvent);
                     }
-                }
 
-                // Set up timeout as fallback
-                const timeoutId = setTimeout(() => {
-                    console.log('Search VRF timeout reached, captured:', capturedVrf);
-                    if (capturedVrf && capturedVrf.length > 0) {
-                        resolve(capturedVrf);
-                    } else {
-                        reject(new Error('Failed to capture VRF token within timeout'));
+                    // Check if we captured the VRF and stop polling
+                    if (window.capturedVrf) {
+                        clearInterval(pollInterval);
                     }
-                }, 10000);
+                }, 1000); // Poll every 1000ms like Tachiyomi
 
-                // Start the process
-                if (document.readyState === 'complete') {
-                    setTimeout(triggerSearch, 500);
-                } else {
-                    window.addEventListener('load', () => {
-                        setTimeout(triggerSearch, 500);
-                    });
-                }
-            });
+                // Cleanup after 15 seconds
+                setTimeout(() => {
+                    clearInterval(pollInterval);
+                }, 15000);
+
+                return 'polling_started';
+            })();
         """.trimIndent()
 
-        val vrf = context.evaluateJs("https://$domain/home", script)
-            ?.takeIf { it.isNotBlank() && it != "null" && it != "{}" }
-            ?: throw Exception("Unable to find search vrf token for query: $query")
+        // Start the polling process
+        context.evaluateJs("https://$domain/home", script)
+
+        // Wait for VRF to be captured with polling
+        val checkScript = """
+            window.capturedVrf || null;
+        """.trimIndent()
+
+        var vrf: String? = null
+        var attempts = 0
+        val maxAttempts = 20 // 20 seconds max wait
+
+        while (vrf == null && attempts < maxAttempts) {
+            delay(1000) // Wait 1 second between checks
+            vrf = context.evaluateJs("https://$domain/home", checkScript)
+                ?.takeIf { it.isNotBlank() && it != "null" && it != "{}" }
+            attempts++
+        }
+
+        if (vrf == null) {
+            throw Exception("Unable to find search vrf token for query: $query after ${maxAttempts} seconds")
+        }
 
         // Cache the VRF token
         vrfCache[query] = vrf
@@ -324,7 +291,7 @@ internal abstract class MangaFireParser(
 
     /**
      * Extract VRF token for chapter/page loading using WebView
-     * This loads a chapter page and captures the AJAX request VRF
+     * Adapted from Tachiyomi MangaFire implementation approach
      */
     private suspend fun extractReadVrf(mangaId: String, type: String, langCode: String): String {
         val cacheKey = "$mangaId@$type@$langCode"
@@ -334,127 +301,89 @@ internal abstract class MangaFireParser(
         val chapterUrl = "https://$domain/manga/$mangaId"
 
         val script = """
-            new Promise((resolve, reject) => {
-                let capturedVrf = null;
-                let interactionTriggered = false;
+            (function() {
+                window.capturedReadVrf = null;
 
-                console.log('Starting VRF extraction for type: $type, lang: $langCode');
+                console.log('Starting read VRF extraction for type: $type, lang: $langCode');
 
-                // Override XMLHttpRequest to capture AJAX calls
+                // Override XMLHttpRequest to capture VRF from AJAX calls
                 const originalOpen = XMLHttpRequest.prototype.open;
                 XMLHttpRequest.prototype.open = function(method, url) {
                     console.log('AJAX call detected:', url);
                     if ((url.includes('ajax/read') || url.includes('ajax/manga')) && url.includes('vrf=')) {
                         try {
                             const urlObj = new URL(url, window.location.origin);
-                            capturedVrf = urlObj.searchParams.get('vrf');
-                            console.log('Captured VRF from read/manga:', capturedVrf);
-                            if (capturedVrf && capturedVrf.length > 0) {
-                                resolve(capturedVrf);
-                                return originalOpen.apply(this, arguments);
+                            const vrf = urlObj.searchParams.get('vrf');
+                            if (vrf && vrf.length > 0) {
+                                window.capturedReadVrf = vrf;
+                                console.log('Captured read VRF:', vrf);
                             }
                         } catch (e) {
-                            console.error('Error parsing URL:', e);
+                            console.error('Error parsing read URL:', e);
                         }
                     }
                     return originalOpen.apply(this, arguments);
                 };
 
-                // Override fetch as well in case site uses fetch
-                const originalFetch = window.fetch;
-                window.fetch = function(url, options) {
-                    if (typeof url === 'string' && (url.includes('ajax/read') || url.includes('ajax/manga')) && url.includes('vrf=')) {
-                        try {
-                            const urlObj = new URL(url, window.location.origin);
-                            capturedVrf = urlObj.searchParams.get('vrf');
-                            console.log('Captured VRF from read/manga fetch:', capturedVrf);
-                            if (capturedVrf && capturedVrf.length > 0) {
-                                resolve(capturedVrf);
-                            }
-                        } catch (e) {
-                            console.error('Error parsing fetch URL:', e);
+                // Try to trigger chapter data loading by interacting with page elements
+                function triggerChapterLoad() {
+                    // Look for language/type tabs and click them
+                    const langElements = document.querySelectorAll('.chapvol-tab a, .list-menu .dropdown-item');
+                    console.log('Found chapter elements:', langElements.length);
+
+                    langElements.forEach(element => {
+                        const dataCode = element.getAttribute('data-code');
+                        const dataName = element.getAttribute('data-name');
+
+                        if (dataCode === '$langCode' || dataName === '$type') {
+                            console.log('Clicking matching element:', element, 'data-code:', dataCode, 'data-name:', dataName);
+                            element.click();
                         }
-                    }
-                    return originalFetch.apply(this, arguments);
-                };
+                    });
 
-                // Wait for page load and try to trigger chapter loading
-                function waitForChapterData() {
-                    if (interactionTriggered) return;
-                    interactionTriggered = true;
-
-                    console.log('Looking for chapter elements...');
-
-                    // Multiple strategies to trigger AJAX calls
-                    const strategies = [
-                        // Strategy 1: Click on language/type tabs
-                        () => {
-                            const langElements = document.querySelectorAll('.chapvol-tab a, .list-menu .dropdown-item');
-                            console.log('Found language elements:', langElements.length);
-
-                            langElements.forEach(element => {
-                                const dataCode = element.getAttribute('data-code');
-                                const dataName = element.getAttribute('data-name');
-                                console.log('Element data-code:', dataCode, 'data-name:', dataName);
-
-                                if (dataCode === '$langCode' || dataName === '$type') {
-                                    console.log('Clicking element:', element);
-                                    element.click();
-                                }
-                            });
-                        },
-                        // Strategy 2: Try to access chapter list directly
-                        () => {
-                            // Look for any buttons or links that might load chapters
-                            const chapterButtons = document.querySelectorAll('button, a, .btn, .tab-pane');
-                            chapterButtons.forEach(button => {
-                                const text = button.textContent || '';
-                                if (text.toLowerCase().includes('chapter') || text.toLowerCase().includes('read')) {
-                                    console.log('Clicking potential chapter button:', button);
-                                    button.click();
-                                }
-                            });
-                        },
-                        // Strategy 3: Try dropdown menus
-                        () => {
-                            const dropdowns = document.querySelectorAll('.dropdown-toggle, .dropdown button');
-                            dropdowns.forEach(dropdown => {
-                                console.log('Clicking dropdown:', dropdown);
-                                dropdown.click();
-                            });
-                        }
-                    ];
-
-                    // Execute strategies with delays
-                    strategies.forEach((strategy, index) => {
-                        setTimeout(strategy, index * 1000);
+                    // Also try clicking any dropdowns that might load chapter data
+                    const dropdowns = document.querySelectorAll('.dropdown-toggle, .btn-group .btn');
+                    dropdowns.forEach(dropdown => {
+                        console.log('Clicking dropdown:', dropdown);
+                        dropdown.click();
                     });
                 }
 
-                // Set up timeout as fallback
-                const timeoutId = setTimeout(() => {
-                    console.log('Read VRF timeout reached, captured:', capturedVrf);
-                    if (capturedVrf && capturedVrf.length > 0) {
-                        resolve(capturedVrf);
-                    } else {
-                        reject(new Error('Failed to capture read VRF token within timeout for ' + '$cacheKey'));
-                    }
-                }, 15000);
-
-                // Start the process
+                // Wait for page load then trigger interactions
                 if (document.readyState === 'complete') {
-                    setTimeout(waitForChapterData, 1000);
+                    setTimeout(triggerChapterLoad, 1000);
                 } else {
                     window.addEventListener('load', () => {
-                        setTimeout(waitForChapterData, 1000);
+                        setTimeout(triggerChapterLoad, 1000);
                     });
                 }
-            });
+
+                return 'read_vrf_extraction_started';
+            })();
         """.trimIndent()
 
-        val vrf = context.evaluateJs(chapterUrl, script)
-            ?.takeIf { it.isNotBlank() && it != "null" && it != "{}" }
-            ?: throw Exception("Unable to find read vrf token for $cacheKey")
+        // Start the VRF extraction process
+        context.evaluateJs(chapterUrl, script)
+
+        // Wait for VRF to be captured with polling
+        val checkScript = """
+            window.capturedReadVrf || null;
+        """.trimIndent()
+
+        var vrf: String? = null
+        var attempts = 0
+        val maxAttempts = 20 // 20 seconds max wait
+
+        while (vrf == null && attempts < maxAttempts) {
+            delay(1000) // Wait 1 second between checks
+            vrf = context.evaluateJs(chapterUrl, checkScript)
+                ?.takeIf { it.isNotBlank() && it != "null" && it != "{}" }
+            attempts++
+        }
+
+        if (vrf == null) {
+            throw Exception("Unable to find read vrf token for $cacheKey after ${maxAttempts} seconds")
+        }
 
         // Cache the VRF token
         vrfCache[cacheKey] = vrf
