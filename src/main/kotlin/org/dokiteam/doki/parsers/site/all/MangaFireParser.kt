@@ -197,11 +197,11 @@ internal abstract class MangaFireParser(
 
     /**
      * Extract VRF token by loading a Blue Lock chapter page
-     * This bootstraps VRF extraction using a known working manga
+     * Simplified version that only uses Blue Lock for all VRF extraction
      */
     private suspend fun extractVrfFromBlueLock(): String {
-        // Try multiple Blue Lock chapters as fallback
-        val chapterOptions = listOf(1, 50, 100, 150, 200, 250, 300, 323) // Spread across range
+        // Try fewer chapters to reduce crashes
+        val chapterOptions = listOf(1, 50, 100, 150) // Reduced range
 
         for (chapterNum in chapterOptions.shuffled()) {
             try {
@@ -210,23 +210,30 @@ internal abstract class MangaFireParser(
                 val script = """
                     (function() {
                         window.capturedVrf = null;
+                        window.vrfList = [];
 
-                        console.log('Loading Blue Lock chapter $chapterNum to extract VRF...');
+                        console.log('🔍 Loading Blue Lock chapter $chapterNum to extract VRF...');
 
-                        // Override XMLHttpRequest to capture VRF from AJAX calls
+                        // Override XMLHttpRequest to capture VRF from both AJAX endpoints
                         const originalOpen = XMLHttpRequest.prototype.open;
                         XMLHttpRequest.prototype.open = function(method, url) {
-                            console.log('AJAX detected:', url);
-                            if (url.includes('ajax/read') && url.includes('vrf=')) {
+                            console.log('🌐 AJAX detected:', url);
+
+                            // Capture VRF from both patterns:
+                            // /ajax/read/kw9j9/chapter/en?vrf=xxx
+                            // /ajax/read/chapter/5486036?vrf=xxx
+                            if (url.includes('/ajax/read/') && url.includes('vrf=')) {
                                 try {
                                     const urlObj = new URL(url, window.location.origin);
                                     const vrf = urlObj.searchParams.get('vrf');
-                                    if (vrf && vrf.length > 0) {
+                                    if (vrf && vrf.length > 10) { // Ensure it's a real VRF token
                                         window.capturedVrf = vrf;
+                                        window.vrfList.push(vrf);
                                         console.log('🎯 VRF captured from Blue Lock chapter $chapterNum:', vrf);
+                                        console.log('📊 Total VRFs captured:', window.vrfList.length);
                                     }
                                 } catch (e) {
-                                    console.error('Error parsing VRF URL:', e);
+                                    console.error('❌ Error parsing VRF URL:', e);
                                 }
                             }
                             return originalOpen.apply(this, arguments);
@@ -235,16 +242,17 @@ internal abstract class MangaFireParser(
                         // Override fetch as backup
                         const originalFetch = window.fetch;
                         window.fetch = function(url, options) {
-                            if (typeof url === 'string' && url.includes('ajax/read') && url.includes('vrf=')) {
+                            if (typeof url === 'string' && url.includes('/ajax/read/') && url.includes('vrf=')) {
                                 try {
                                     const urlObj = new URL(url, window.location.origin);
                                     const vrf = urlObj.searchParams.get('vrf');
-                                    if (vrf && vrf.length > 0) {
+                                    if (vrf && vrf.length > 10) {
                                         window.capturedVrf = vrf;
+                                        window.vrfList.push(vrf);
                                         console.log('🎯 VRF captured from fetch:', vrf);
                                     }
                                 } catch (e) {
-                                    console.error('Error parsing fetch VRF URL:', e);
+                                    console.error('❌ Error parsing fetch VRF URL:', e);
                                 }
                             }
                             return originalFetch.apply(this, arguments);
@@ -254,23 +262,39 @@ internal abstract class MangaFireParser(
                     })();
                 """.trimIndent()
 
-                // Load Blue Lock chapter and extract VRF
-                context.evaluateJs(blueLockUrl, script)
+                // Load Blue Lock chapter and extract VRF with crash prevention
+                try {
+                    context.evaluateJs(blueLockUrl, script)
 
-                // Poll for VRF capture
-                val checkScript = """
-                    window.capturedVrf || null;
-                """.trimIndent()
+                    // Wait a bit for page to load before polling
+                    delay(2000)
 
-                var vrf: String? = null
-                var attempts = 0
-                val maxAttempts = 10 // 10 seconds per chapter
+                    // Poll for VRF capture with shorter timeout to prevent crashes
+                    val checkScript = """
+                        window.capturedVrf || null;
+                    """.trimIndent()
 
-                while (vrf == null && attempts < maxAttempts) {
-                    delay(1000)
-                    vrf = context.evaluateJs(blueLockUrl, checkScript)
-                        ?.takeIf { it.isNotBlank() && it != "null" && it != "{}" }
-                    attempts++
+                    var vrf: String? = null
+                    var attempts = 0
+                    val maxAttempts = 6 // Further reduced to prevent crashes
+
+                    while (vrf == null && attempts < maxAttempts) {
+                        try {
+                            vrf = context.evaluateJs(blueLockUrl, checkScript)
+                                ?.takeIf { it.isNotBlank() && it != "null" && it != "{}" && it.length > 10 }
+                        } catch (jsError: Exception) {
+                            println("⚠️ JavaScript evaluation error: ${jsError.message}")
+                            break // Exit on JS errors to prevent crashes
+                        }
+
+                        if (vrf == null) {
+                            delay(1000)
+                            attempts++
+                        }
+                    }
+                } catch (webViewError: Exception) {
+                    println("⚠️ WebView error for chapter $chapterNum: ${webViewError.message}")
+                    continue // Skip this chapter and try next one
                 }
 
                 if (vrf != null) {
@@ -278,9 +302,16 @@ internal abstract class MangaFireParser(
                 }
 
             } catch (e: Exception) {
-                // Try next chapter
+                // Log error and try next chapter
+                println("❌ Blue Lock chapter $chapterNum failed: ${e.message}")
+
+                // Add cooldown between chapter attempts to prevent WebView overload
+                delay(3000)
                 continue
             }
+
+            // Add delay between attempts even on success/failure to prevent crashes
+            delay(2000)
         }
 
         throw Exception("Unable to extract VRF from any Blue Lock chapter after trying ${chapterOptions.size} chapters")
@@ -308,144 +339,18 @@ internal abstract class MangaFireParser(
     }
 
     /**
-     * Extract VRF token for search queries using Blue Lock bootstrap
+     * Extract VRF token for any operation using Blue Lock only
+     * Simplified approach that uses Blue Lock for both search and read operations
      */
-    private suspend fun extractSearchVrf(query: String): String {
-        // Check query-specific cache first
-        vrfCache[query]?.let { return it }
+    private suspend fun extractVrfToken(operation: String = "general"): String {
+        // Check cache first
+        vrfCache[operation]?.let { return it }
 
-        // Get reusable VRF token
+        // Get reusable VRF token from Blue Lock
         val vrf = getVrfToken()
 
-        // Cache for this query
-        vrfCache[query] = vrf
-        return vrf
-    }
-
-    /**
-     * Extract VRF token for chapter/page loading using the actual manga URL
-     */
-    private suspend fun extractReadVrf(mangaId: String, type: String, langCode: String): String {
-        val cacheKey = "$mangaId@$type@$langCode"
-        vrfCache[cacheKey]?.let { return it }
-
-        // Use the actual manga URL to extract VRF
-        val mangaUrl = "https://$domain/manga/$mangaId"
-
-        val script = """
-            (function() {
-                window.capturedReadVrf = null;
-
-                console.log('Loading manga page to extract read VRF for: $mangaId');
-
-                // Override XMLHttpRequest to capture VRF from AJAX calls
-                const originalOpen = XMLHttpRequest.prototype.open;
-                XMLHttpRequest.prototype.open = function(method, url) {
-                    console.log('AJAX detected:', url);
-                    if ((url.includes('ajax/read') || url.includes('ajax/manga')) && url.includes('vrf=')) {
-                        try {
-                            const urlObj = new URL(url, window.location.origin);
-                            const vrf = urlObj.searchParams.get('vrf');
-                            if (vrf && vrf.length > 0) {
-                                window.capturedReadVrf = vrf;
-                                console.log('🎯 VRF captured from manga page:', vrf);
-                            }
-                        } catch (e) {
-                            console.error('Error parsing VRF URL:', e);
-                        }
-                    }
-                    return originalOpen.apply(this, arguments);
-                };
-
-                // Override fetch as backup
-                const originalFetch = window.fetch;
-                window.fetch = function(url, options) {
-                    if (typeof url === 'string' && (url.includes('ajax/read') || url.includes('ajax/manga')) && url.includes('vrf=')) {
-                        try {
-                            const urlObj = new URL(url, window.location.origin);
-                            const vrf = urlObj.searchParams.get('vrf');
-                            if (vrf && vrf.length > 0) {
-                                window.capturedReadVrf = vrf;
-                                console.log('🎯 VRF captured from fetch:', vrf);
-                            }
-                        } catch (e) {
-                            console.error('Error parsing fetch VRF URL:', e);
-                        }
-                    }
-                    return originalFetch.apply(this, arguments);
-                };
-
-                // Wait for page load, then trigger chapter loading interactions
-                function triggerChapterLoad() {
-                    console.log('Triggering chapter interactions for type: $type, lang: $langCode');
-
-                    // Try clicking language/type tabs that match our requirements
-                    const langElements = document.querySelectorAll('.chapvol-tab a, .list-menu .dropdown-item');
-                    console.log('Found chapter elements:', langElements.length);
-
-                    langElements.forEach(element => {
-                        const dataCode = element.getAttribute('data-code');
-                        const dataName = element.getAttribute('data-name');
-
-                        if (dataCode === '$langCode' || dataName === '$type') {
-                            console.log('Clicking matching element for', dataCode, dataName);
-                            element.click();
-                        }
-                    });
-
-                    // Also try general chapter-related elements
-                    const chapterButtons = document.querySelectorAll('.dropdown-toggle, .btn-group .btn, .chapvol-tab');
-                    chapterButtons.forEach((button, index) => {
-                        setTimeout(() => {
-                            console.log('Clicking chapter button', index);
-                            button.click();
-                        }, index * 200); // Stagger clicks
-                    });
-                }
-
-                // Start the process after page loads
-                if (document.readyState === 'complete') {
-                    setTimeout(triggerChapterLoad, 1000);
-                } else {
-                    window.addEventListener('load', () => {
-                        setTimeout(triggerChapterLoad, 1000);
-                    });
-                }
-
-                return 'read_vrf_extraction_started';
-            })();
-        """.trimIndent()
-
-        // Load the actual manga page and extract VRF
-        context.evaluateJs(mangaUrl, script)
-
-        // Poll for VRF capture
-        val checkScript = """
-            window.capturedReadVrf || null;
-        """.trimIndent()
-
-        var vrf: String? = null
-        var attempts = 0
-        val maxAttempts = 15 // 15 seconds max wait
-
-        while (vrf == null && attempts < maxAttempts) {
-            delay(1000)
-            vrf = context.evaluateJs(mangaUrl, checkScript)
-                ?.takeIf { it.isNotBlank() && it != "null" && it != "{}" }
-            attempts++
-        }
-
-        if (vrf == null) {
-            // Fallback to Blue Lock if manga page fails
-            try {
-                return extractVrfFromBlueLock()
-            } catch (e: Exception) {
-                throw Exception("Unable to extract VRF from manga page $mangaId or Blue Lock fallback after ${maxAttempts} seconds")
-            }
-        }
-
-        // Cache the VRF token
-        vrfCache[cacheKey] = vrf
+        // Cache for this operation
+        vrfCache[operation] = vrf
         return vrf
     }
 
@@ -461,8 +366,8 @@ internal abstract class MangaFireParser(
                     }
                     addEncodedQueryParameter("keyword", encodedQuery)
 
-                    // Use WebView to extract VRF for search
-                    val searchVrf = extractSearchVrf(filter.query.trim())
+                    // Use Blue Lock to extract VRF for search
+                    val searchVrf = extractVrfToken("search_${filter.query.trim()}")
                     addQueryParameter("vrf", searchVrf)
 
                     addQueryParameter(
@@ -625,7 +530,7 @@ internal abstract class MangaFireParser(
     }
 
     private suspend fun getChaptersBranch(mangaId: String, branch: ChapterBranch): List<MangaChapter> {
-        val readVrf = extractReadVrf(mangaId, branch.type, branch.langCode)
+        val readVrf = extractVrfToken("read_${mangaId}_${branch.type}_${branch.langCode}")
 
         val response = client
             .httpGet("https://$domain/ajax/read/$mangaId/${branch.type}/${branch.langCode}?vrf=$readVrf")
@@ -760,7 +665,7 @@ internal abstract class MangaFireParser(
         // Extract mangaId from chapter URL pattern: mangaId/type/lang/chapterId
         val urlParts = chapter.url.split('/')
         val mangaId = urlParts[0]
-        val vrf = extractReadVrf(mangaId, "chapter", siteLang)
+        val vrf = extractVrfToken("pages_${mangaId}_${chapterId}")
 
         val images = client
             .httpGet("https://$domain/ajax/read/chapter/$chapterId?vrf=$vrf")
