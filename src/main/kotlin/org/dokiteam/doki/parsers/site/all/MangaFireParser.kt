@@ -323,16 +323,128 @@ internal abstract class MangaFireParser(
     }
 
     /**
-     * Extract VRF token for chapter/page loading using Blue Lock bootstrap
+     * Extract VRF token for chapter/page loading using the actual manga URL
      */
     private suspend fun extractReadVrf(mangaId: String, type: String, langCode: String): String {
         val cacheKey = "$mangaId@$type@$langCode"
         vrfCache[cacheKey]?.let { return it }
 
-        // Get reusable VRF token
-        val vrf = getVrfToken()
+        // Use the actual manga URL to extract VRF
+        val mangaUrl = "https://$domain/manga/$mangaId"
 
-        // Cache for this operation
+        val script = """
+            (function() {
+                window.capturedReadVrf = null;
+
+                console.log('Loading manga page to extract read VRF for: $mangaId');
+
+                // Override XMLHttpRequest to capture VRF from AJAX calls
+                const originalOpen = XMLHttpRequest.prototype.open;
+                XMLHttpRequest.prototype.open = function(method, url) {
+                    console.log('AJAX detected:', url);
+                    if ((url.includes('ajax/read') || url.includes('ajax/manga')) && url.includes('vrf=')) {
+                        try {
+                            const urlObj = new URL(url, window.location.origin);
+                            const vrf = urlObj.searchParams.get('vrf');
+                            if (vrf && vrf.length > 0) {
+                                window.capturedReadVrf = vrf;
+                                console.log('🎯 VRF captured from manga page:', vrf);
+                            }
+                        } catch (e) {
+                            console.error('Error parsing VRF URL:', e);
+                        }
+                    }
+                    return originalOpen.apply(this, arguments);
+                };
+
+                // Override fetch as backup
+                const originalFetch = window.fetch;
+                window.fetch = function(url, options) {
+                    if (typeof url === 'string' && (url.includes('ajax/read') || url.includes('ajax/manga')) && url.includes('vrf=')) {
+                        try {
+                            const urlObj = new URL(url, window.location.origin);
+                            const vrf = urlObj.searchParams.get('vrf');
+                            if (vrf && vrf.length > 0) {
+                                window.capturedReadVrf = vrf;
+                                console.log('🎯 VRF captured from fetch:', vrf);
+                            }
+                        } catch (e) {
+                            console.error('Error parsing fetch VRF URL:', e);
+                        }
+                    }
+                    return originalFetch.apply(this, arguments);
+                };
+
+                // Wait for page load, then trigger chapter loading interactions
+                function triggerChapterLoad() {
+                    console.log('Triggering chapter interactions for type: $type, lang: $langCode');
+
+                    // Try clicking language/type tabs that match our requirements
+                    const langElements = document.querySelectorAll('.chapvol-tab a, .list-menu .dropdown-item');
+                    console.log('Found chapter elements:', langElements.length);
+
+                    langElements.forEach(element => {
+                        const dataCode = element.getAttribute('data-code');
+                        const dataName = element.getAttribute('data-name');
+
+                        if (dataCode === '$langCode' || dataName === '$type') {
+                            console.log('Clicking matching element for', dataCode, dataName);
+                            element.click();
+                        }
+                    });
+
+                    // Also try general chapter-related elements
+                    const chapterButtons = document.querySelectorAll('.dropdown-toggle, .btn-group .btn, .chapvol-tab');
+                    chapterButtons.forEach((button, index) => {
+                        setTimeout(() => {
+                            console.log('Clicking chapter button', index);
+                            button.click();
+                        }, index * 200); // Stagger clicks
+                    });
+                }
+
+                // Start the process after page loads
+                if (document.readyState === 'complete') {
+                    setTimeout(triggerChapterLoad, 1000);
+                } else {
+                    window.addEventListener('load', () => {
+                        setTimeout(triggerChapterLoad, 1000);
+                    });
+                }
+
+                return 'read_vrf_extraction_started';
+            })();
+        """.trimIndent()
+
+        // Load the actual manga page and extract VRF
+        context.evaluateJs(mangaUrl, script)
+
+        // Poll for VRF capture
+        val checkScript = """
+            window.capturedReadVrf || null;
+        """.trimIndent()
+
+        var vrf: String? = null
+        var attempts = 0
+        val maxAttempts = 15 // 15 seconds max wait
+
+        while (vrf == null && attempts < maxAttempts) {
+            delay(1000)
+            vrf = context.evaluateJs(mangaUrl, checkScript)
+                ?.takeIf { it.isNotBlank() && it != "null" && it != "{}" }
+            attempts++
+        }
+
+        if (vrf == null) {
+            // Fallback to Blue Lock if manga page fails
+            try {
+                return extractVrfFromBlueLock()
+            } catch (e: Exception) {
+                throw Exception("Unable to extract VRF from manga page $mangaId or Blue Lock fallback after ${maxAttempts} seconds")
+            }
+        }
+
+        // Cache the VRF token
         vrfCache[cacheKey] = vrf
         return vrf
     }
