@@ -258,10 +258,11 @@ internal abstract class MangaFireParser(
      * Pattern: /ajax/read/chapter/{chapterId}?vrf=xxx
      */
     private suspend fun extractChapterImagesVrf(chapterId: String, mangaId: String, type: String, langCode: String): String {
+        // Load the actual chapter page to extract VRF
+        // Keep the full mangaId including the slug part (e.g., kkochi-samkin-jimseung.kx976)
+        val chapterUrl = "https://$domain/read/$mangaId/$langCode/$type-$chapterId"
+
         try {
-            // Load the actual chapter page to extract VRF
-            // Keep the full mangaId including the slug part (e.g., kkochi-samkin-jimseung.kx976)
-            val chapterUrl = "https://$domain/read/$mangaId/$langCode/$type-$chapterId"
             println("🔍 Extracting chapter images VRF for chapter $chapterId from chapter page: $chapterUrl")
 
             // Capture URLs specifically for this chapter's images pattern
