@@ -68,10 +68,16 @@ internal abstract class MangaFireParser(
     private val siteLang: String,
 ) : PagedMangaParser(context, source, 30), Interceptor, MangaParserAuthProvider {
 
-    // VRF Cache to avoid multiple WebView calls for same queries
+    // VRF Cache to avoid multiple WebView calls
+    // VRF tokens appear to be session-based and reusable across operations
     private val vrfCache = object : LinkedHashMap<String, String>() {
-        override fun removeEldestEntry(eldest: Map.Entry<String?, String?>?) = size > 20
+        override fun removeEldestEntry(eldest: Map.Entry<String?, String?>?) = size > 50
     }
+
+    // Global VRF token for session reuse
+    private var globalVrf: String? = null
+    private var vrfTimestamp: Long = 0
+    private val vrfValidityMs = 12 * 60 * 60 * 1000L // 12 hours
 
     private val client: WebClient by lazy {
         val newHttpClient = context.httpClient.newBuilder()
@@ -190,202 +196,143 @@ internal abstract class MangaFireParser(
     )
 
     /**
-     * Extract VRF token using WebView for search queries
-     * Adapted from Tachiyomi MangaFire implementation with polling approach
+     * Extract VRF token by loading a Blue Lock chapter page
+     * This bootstraps VRF extraction using a known working manga
+     */
+    private suspend fun extractVrfFromBlueLock(): String {
+        // Try multiple Blue Lock chapters as fallback
+        val chapterOptions = listOf(1, 50, 100, 150, 200, 250, 300, 323) // Spread across range
+
+        for (chapterNum in chapterOptions.shuffled()) {
+            try {
+                val blueLockUrl = "https://$domain/read/blue-lockk.kw9j9/en/chapter-$chapterNum"
+
+                val script = """
+                    (function() {
+                        window.capturedVrf = null;
+
+                        console.log('Loading Blue Lock chapter $chapterNum to extract VRF...');
+
+                        // Override XMLHttpRequest to capture VRF from AJAX calls
+                        const originalOpen = XMLHttpRequest.prototype.open;
+                        XMLHttpRequest.prototype.open = function(method, url) {
+                            console.log('AJAX detected:', url);
+                            if (url.includes('ajax/read') && url.includes('vrf=')) {
+                                try {
+                                    const urlObj = new URL(url, window.location.origin);
+                                    const vrf = urlObj.searchParams.get('vrf');
+                                    if (vrf && vrf.length > 0) {
+                                        window.capturedVrf = vrf;
+                                        console.log('🎯 VRF captured from Blue Lock chapter $chapterNum:', vrf);
+                                    }
+                                } catch (e) {
+                                    console.error('Error parsing VRF URL:', e);
+                                }
+                            }
+                            return originalOpen.apply(this, arguments);
+                        };
+
+                        // Override fetch as backup
+                        const originalFetch = window.fetch;
+                        window.fetch = function(url, options) {
+                            if (typeof url === 'string' && url.includes('ajax/read') && url.includes('vrf=')) {
+                                try {
+                                    const urlObj = new URL(url, window.location.origin);
+                                    const vrf = urlObj.searchParams.get('vrf');
+                                    if (vrf && vrf.length > 0) {
+                                        window.capturedVrf = vrf;
+                                        console.log('🎯 VRF captured from fetch:', vrf);
+                                    }
+                                } catch (e) {
+                                    console.error('Error parsing fetch VRF URL:', e);
+                                }
+                            }
+                            return originalFetch.apply(this, arguments);
+                        };
+
+                        return 'vrf_extraction_started_chapter_$chapterNum';
+                    })();
+                """.trimIndent()
+
+                // Load Blue Lock chapter and extract VRF
+                context.evaluateJs(blueLockUrl, script)
+
+                // Poll for VRF capture
+                val checkScript = """
+                    window.capturedVrf || null;
+                """.trimIndent()
+
+                var vrf: String? = null
+                var attempts = 0
+                val maxAttempts = 10 // 10 seconds per chapter
+
+                while (vrf == null && attempts < maxAttempts) {
+                    delay(1000)
+                    vrf = context.evaluateJs(blueLockUrl, checkScript)
+                        ?.takeIf { it.isNotBlank() && it != "null" && it != "{}" }
+                    attempts++
+                }
+
+                if (vrf != null) {
+                    return vrf // Success! Return the VRF
+                }
+
+            } catch (e: Exception) {
+                // Try next chapter
+                continue
+            }
+        }
+
+        throw Exception("Unable to extract VRF from any Blue Lock chapter after trying ${chapterOptions.size} chapters")
+    }
+
+    /**
+     * Get or extract VRF token (reusable across operations)
+     */
+    private suspend fun getVrfToken(): String {
+        val currentTime = System.currentTimeMillis()
+
+        // Check if we have a valid global VRF
+        if (globalVrf != null && (currentTime - vrfTimestamp) < vrfValidityMs) {
+            return globalVrf!!
+        }
+
+        // Extract new VRF using Blue Lock
+        val vrf = extractVrfFromBlueLock()
+
+        // Cache globally
+        globalVrf = vrf
+        vrfTimestamp = currentTime
+
+        return vrf
+    }
+
+    /**
+     * Extract VRF token for search queries using Blue Lock bootstrap
      */
     private suspend fun extractSearchVrf(query: String): String {
-        // Check cache first
+        // Check query-specific cache first
         vrfCache[query]?.let { return it }
 
-        // Escape query string for safe JavaScript injection
-        val escapedQuery = query.replace("\\", "\\\\")
-            .replace("'", "\\'")
-            .replace("\"", "\\\"")
-            .replace("\n", "\\n")
-            .replace("\r", "\\r")
+        // Get reusable VRF token
+        val vrf = getVrfToken()
 
-        val script = """
-            (function() {
-                window.capturedVrf = null;
-
-                // Override XMLHttpRequest to capture VRF from AJAX calls
-                const originalOpen = XMLHttpRequest.prototype.open;
-                XMLHttpRequest.prototype.open = function(method, url) {
-                    if (url.includes('ajax/manga/search') && url.includes('vrf=')) {
-                        try {
-                            const urlObj = new URL(url, window.location.origin);
-                            const vrf = urlObj.searchParams.get('vrf');
-                            if (vrf && vrf.length > 0) {
-                                window.capturedVrf = vrf;
-                                console.log('Captured search VRF:', vrf);
-                            }
-                        } catch (e) {
-                            console.error('Error parsing search URL:', e);
-                        }
-                    }
-                    return originalOpen.apply(this, arguments);
-                };
-
-                // Start polling for search trigger - similar to Tachiyomi approach
-                const pollInterval = setInterval(() => {
-                    const searchInput = document.querySelector('.search-inner input[name=keyword]') ||
-                                     document.querySelector('input[name=keyword]') ||
-                                     document.querySelector('#keyword') ||
-                                     document.querySelector('.search input');
-
-                    if (searchInput) {
-                        console.log('Triggering search for: $escapedQuery');
-                        searchInput.value = '$escapedQuery';
-
-                        // Trigger keyup event like Tachiyomi does
-                        const event = new Event('keyup', { bubbles: true });
-                        searchInput.dispatchEvent(event);
-
-                        // Also try input event
-                        const inputEvent = new Event('input', { bubbles: true });
-                        searchInput.dispatchEvent(inputEvent);
-                    }
-
-                    // Check if we captured the VRF and stop polling
-                    if (window.capturedVrf) {
-                        clearInterval(pollInterval);
-                    }
-                }, 1000); // Poll every 1000ms like Tachiyomi
-
-                // Cleanup after 15 seconds
-                setTimeout(() => {
-                    clearInterval(pollInterval);
-                }, 15000);
-
-                return 'polling_started';
-            })();
-        """.trimIndent()
-
-        // Start the polling process
-        context.evaluateJs("https://$domain/home", script)
-
-        // Wait for VRF to be captured with polling
-        val checkScript = """
-            window.capturedVrf || null;
-        """.trimIndent()
-
-        var vrf: String? = null
-        var attempts = 0
-        val maxAttempts = 20 // 20 seconds max wait
-
-        while (vrf == null && attempts < maxAttempts) {
-            delay(1000) // Wait 1 second between checks
-            vrf = context.evaluateJs("https://$domain/home", checkScript)
-                ?.takeIf { it.isNotBlank() && it != "null" && it != "{}" }
-            attempts++
-        }
-
-        if (vrf == null) {
-            throw Exception("Unable to find search vrf token for query: $query after ${maxAttempts} seconds")
-        }
-
-        // Cache the VRF token
+        // Cache for this query
         vrfCache[query] = vrf
         return vrf
     }
 
     /**
-     * Extract VRF token for chapter/page loading using WebView
-     * Adapted from Tachiyomi MangaFire implementation approach
+     * Extract VRF token for chapter/page loading using Blue Lock bootstrap
      */
     private suspend fun extractReadVrf(mangaId: String, type: String, langCode: String): String {
         val cacheKey = "$mangaId@$type@$langCode"
         vrfCache[cacheKey]?.let { return it }
 
-        // Use a real manga URL to trigger AJAX calls
-        val chapterUrl = "https://$domain/manga/$mangaId"
+        // Get reusable VRF token
+        val vrf = getVrfToken()
 
-        val script = """
-            (function() {
-                window.capturedReadVrf = null;
-
-                console.log('Starting read VRF extraction for type: $type, lang: $langCode');
-
-                // Override XMLHttpRequest to capture VRF from AJAX calls
-                const originalOpen = XMLHttpRequest.prototype.open;
-                XMLHttpRequest.prototype.open = function(method, url) {
-                    console.log('AJAX call detected:', url);
-                    if ((url.includes('ajax/read') || url.includes('ajax/manga')) && url.includes('vrf=')) {
-                        try {
-                            const urlObj = new URL(url, window.location.origin);
-                            const vrf = urlObj.searchParams.get('vrf');
-                            if (vrf && vrf.length > 0) {
-                                window.capturedReadVrf = vrf;
-                                console.log('Captured read VRF:', vrf);
-                            }
-                        } catch (e) {
-                            console.error('Error parsing read URL:', e);
-                        }
-                    }
-                    return originalOpen.apply(this, arguments);
-                };
-
-                // Try to trigger chapter data loading by interacting with page elements
-                function triggerChapterLoad() {
-                    // Look for language/type tabs and click them
-                    const langElements = document.querySelectorAll('.chapvol-tab a, .list-menu .dropdown-item');
-                    console.log('Found chapter elements:', langElements.length);
-
-                    langElements.forEach(element => {
-                        const dataCode = element.getAttribute('data-code');
-                        const dataName = element.getAttribute('data-name');
-
-                        if (dataCode === '$langCode' || dataName === '$type') {
-                            console.log('Clicking matching element:', element, 'data-code:', dataCode, 'data-name:', dataName);
-                            element.click();
-                        }
-                    });
-
-                    // Also try clicking any dropdowns that might load chapter data
-                    const dropdowns = document.querySelectorAll('.dropdown-toggle, .btn-group .btn');
-                    dropdowns.forEach(dropdown => {
-                        console.log('Clicking dropdown:', dropdown);
-                        dropdown.click();
-                    });
-                }
-
-                // Wait for page load then trigger interactions
-                if (document.readyState === 'complete') {
-                    setTimeout(triggerChapterLoad, 1000);
-                } else {
-                    window.addEventListener('load', () => {
-                        setTimeout(triggerChapterLoad, 1000);
-                    });
-                }
-
-                return 'read_vrf_extraction_started';
-            })();
-        """.trimIndent()
-
-        // Start the VRF extraction process
-        context.evaluateJs(chapterUrl, script)
-
-        // Wait for VRF to be captured with polling
-        val checkScript = """
-            window.capturedReadVrf || null;
-        """.trimIndent()
-
-        var vrf: String? = null
-        var attempts = 0
-        val maxAttempts = 20 // 20 seconds max wait
-
-        while (vrf == null && attempts < maxAttempts) {
-            delay(1000) // Wait 1 second between checks
-            vrf = context.evaluateJs(chapterUrl, checkScript)
-                ?.takeIf { it.isNotBlank() && it != "null" && it != "{}" }
-            attempts++
-        }
-
-        if (vrf == null) {
-            throw Exception("Unable to find read vrf token for $cacheKey after ${maxAttempts} seconds")
-        }
-
-        // Cache the VRF token
+        // Cache for this operation
         vrfCache[cacheKey] = vrf
         return vrf
     }
