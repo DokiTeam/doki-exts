@@ -211,52 +211,84 @@ internal abstract class MangaFireParser(
                     (function() {
                         window.capturedVrf = null;
                         window.vrfList = [];
+                        window.allRequests = [];
 
                         console.log('🔍 Loading Blue Lock chapter $chapterNum to extract VRF...');
 
-                        // Override XMLHttpRequest to capture VRF from both AJAX endpoints
+                        // Override XMLHttpRequest to log ALL requests and capture VRF
                         const originalOpen = XMLHttpRequest.prototype.open;
                         XMLHttpRequest.prototype.open = function(method, url) {
-                            console.log('🌐 AJAX detected:', url);
+                            // Log EVERY request made
+                            console.log('📡 XHR REQUEST:', method, url);
+                            window.allRequests.push({type: 'XHR', method: method, url: url, timestamp: Date.now()});
 
-                            // Capture VRF from both patterns:
-                            // /ajax/read/kw9j9/chapter/en?vrf=xxx
-                            // /ajax/read/chapter/5486036?vrf=xxx
-                            if (url.includes('/ajax/read/') && url.includes('vrf=')) {
-                                try {
-                                    const urlObj = new URL(url, window.location.origin);
-                                    const vrf = urlObj.searchParams.get('vrf');
-                                    if (vrf && vrf.length > 10) { // Ensure it's a real VRF token
-                                        window.capturedVrf = vrf;
-                                        window.vrfList.push(vrf);
-                                        console.log('🎯 VRF captured from Blue Lock chapter $chapterNum:', vrf);
-                                        console.log('📊 Total VRFs captured:', window.vrfList.length);
+                            // Check if this is an AJAX request with VRF
+                            if (url.includes('/ajax/')) {
+                                console.log('🔍 AJAX request detected:', url);
+
+                                if (url.includes('vrf=')) {
+                                    console.log('🎯 VRF parameter found in URL:', url);
+                                    try {
+                                        const urlObj = new URL(url, window.location.origin);
+                                        const vrf = urlObj.searchParams.get('vrf');
+                                        console.log('🔑 Extracted VRF token:', vrf, '(length:', vrf ? vrf.length : 0, ')');
+
+                                        if (vrf && vrf.length > 10) { // Ensure it's a real VRF token
+                                            window.capturedVrf = vrf;
+                                            window.vrfList.push(vrf);
+                                            console.log('✅ VRF captured from Blue Lock chapter $chapterNum:', vrf);
+                                            console.log('📊 Total VRFs captured:', window.vrfList.length);
+                                        } else {
+                                            console.log('⚠️ VRF token too short or invalid:', vrf);
+                                        }
+                                    } catch (e) {
+                                        console.error('❌ Error parsing VRF URL:', e);
                                     }
-                                } catch (e) {
-                                    console.error('❌ Error parsing VRF URL:', e);
+                                } else {
+                                    console.log('❌ No VRF parameter in AJAX URL:', url);
                                 }
                             }
                             return originalOpen.apply(this, arguments);
                         };
 
-                        // Override fetch as backup
+                        // Override fetch to log ALL fetch requests
                         const originalFetch = window.fetch;
                         window.fetch = function(url, options) {
-                            if (typeof url === 'string' && url.includes('/ajax/read/') && url.includes('vrf=')) {
-                                try {
-                                    const urlObj = new URL(url, window.location.origin);
-                                    const vrf = urlObj.searchParams.get('vrf');
-                                    if (vrf && vrf.length > 10) {
-                                        window.capturedVrf = vrf;
-                                        window.vrfList.push(vrf);
-                                        console.log('🎯 VRF captured from fetch:', vrf);
+                            console.log('📡 FETCH REQUEST:', url);
+                            window.allRequests.push({type: 'FETCH', url: url, timestamp: Date.now()});
+
+                            if (typeof url === 'string') {
+                                if (url.includes('/ajax/')) {
+                                    console.log('🔍 AJAX fetch detected:', url);
+
+                                    if (url.includes('vrf=')) {
+                                        console.log('🎯 VRF parameter found in fetch URL:', url);
+                                        try {
+                                            const urlObj = new URL(url, window.location.origin);
+                                            const vrf = urlObj.searchParams.get('vrf');
+                                            console.log('🔑 Extracted VRF token from fetch:', vrf, '(length:', vrf ? vrf.length : 0, ')');
+
+                                            if (vrf && vrf.length > 10) {
+                                                window.capturedVrf = vrf;
+                                                window.vrfList.push(vrf);
+                                                console.log('✅ VRF captured from fetch:', vrf);
+                                            } else {
+                                                console.log('⚠️ VRF token too short or invalid from fetch:', vrf);
+                                            }
+                                        } catch (e) {
+                                            console.error('❌ Error parsing fetch VRF URL:', e);
+                                        }
+                                    } else {
+                                        console.log('❌ No VRF parameter in AJAX fetch URL:', url);
                                     }
-                                } catch (e) {
-                                    console.error('❌ Error parsing fetch VRF URL:', e);
                                 }
                             }
                             return originalFetch.apply(this, arguments);
                         };
+
+                        // Log page load status
+                        console.log('📄 Page readyState:', document.readyState);
+                        console.log('🌍 Current URL:', window.location.href);
 
                         return 'vrf_extraction_started_chapter_$chapterNum';
                     })();
