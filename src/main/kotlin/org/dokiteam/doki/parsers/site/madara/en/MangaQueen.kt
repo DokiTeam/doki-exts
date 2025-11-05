@@ -1,0 +1,12 @@
+package org.dokiteam.doki.parsers.site.madara.en
+
+import org.dokiteam.doki.parsers.Broken
+import org.dokiteam.doki.parsers.MangaLoaderContext
+import org.dokiteam.doki.parsers.MangaSourceParser
+import org.dokiteam.doki.parsers.model.MangaParserSource
+import org.dokiteam.doki.parsers.site.madara.MadaraParser
+
+@Broken
+@MangaSourceParser("MANGA_QUEEN", "MangaQueen", "en")
+internal class MangaQueen(context: MangaLoaderContext) :
+	MadaraParser(context, MangaParserSource.MANGA_QUEEN, "mangaqueen.com", 16)
