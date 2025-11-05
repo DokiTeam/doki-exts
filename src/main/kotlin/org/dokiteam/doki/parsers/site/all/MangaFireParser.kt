@@ -257,10 +257,16 @@ internal abstract class MangaFireParser(
      * Extract VRF token for individual chapter images from the actual chapter page
      * Pattern: /ajax/read/chapter/{chapterId}?vrf=xxx
      */
-    private suspend fun extractChapterImagesVrf(chapterId: String, mangaId: String, type: String, langCode: String): String {
-        // Load the actual chapter page to extract VRF
+    private suspend fun extractChapterImagesVrf(chapterId: String, mangaId: String, type: String, langCode: String, chapterNumber: Float): String {
+        // Load the actual chapter page to extract VRF using the readable chapter number
         // Keep the full mangaId including the slug part (e.g., kkochi-samkin-jimseung.kx976)
-        val chapterUrl = "https://$domain/read/$mangaId/$langCode/$type-$chapterId"
+        // Use chapter number for URL construction (e.g., chapter-2) instead of internal ID
+        val chapterNumberStr = if (chapterNumber == chapterNumber.toInt().toFloat()) {
+            chapterNumber.toInt().toString()
+        } else {
+            chapterNumber.toString()
+        }
+        val chapterUrl = "https://$domain/read/$mangaId/$langCode/$type-$chapterNumberStr"
 
         try {
             println("🔍 Extracting chapter images VRF for chapter $chapterId from chapter page: $chapterUrl")
@@ -330,17 +336,14 @@ internal abstract class MangaFireParser(
                 vrf
             }
             "chapter_images" -> {
-                require(chapterId != null && mangaId != null && type != null && langCode != null) {
-                    "chapterId, mangaId, type, and langCode are required for chapter_images operation"
-                }
-                // Don't cache chapter images VRF - each chapter needs its own unique token
-                val vrf = extractChapterImagesVrf(chapterId, mangaId, type, langCode)
-                vrf
+                // Chapter images VRF extraction is now handled directly in getPages() function
+                // to properly pass the chapter number for URL construction
+                throw IllegalStateException("chapter_images VRF should be extracted directly via extractChapterImagesVrf(), not through extractVrfToken()")
             }
             "search" -> {
-                // For search operations - will implement a proper search VRF extraction later
-                // For now, throw an exception to indicate this needs to be implemented
-                throw UnsupportedOperationException("Search VRF extraction not yet implemented - will be added later")
+                // Search temporarily disabled due to VRF complexity - each search requires unique VRF token
+                // Users can use Browse/Filter functionality instead
+                throw UnsupportedOperationException("Search temporarily unavailable - use Browse/Filter instead. Search VRF requires complex WebView interaction and will be implemented later.")
             }
             else -> {
                 throw IllegalArgumentException("Unknown VRF operation: $operation")
@@ -355,31 +358,8 @@ internal abstract class MangaFireParser(
 
             when {
                 !filter.query.isNullOrEmpty() -> {
-                    val encodedQuery = filter.query.splitByWhitespace().joinToString(separator = "+") { part ->
-                        part.urlEncoded()
-                    }
-                    addEncodedQueryParameter("keyword", encodedQuery)
-
-                    // TODO: Implement search-specific VRF extraction
-                    // For now, disable search functionality until search VRF pattern is implemented
-                    // val searchVrf = extractVrfToken("search")
-                    // addQueryParameter("vrf", searchVrf)
-
-                    // Temporary: Skip VRF for search until we implement the search pattern
-                    println("⚠️ Search VRF not yet implemented - search may not work")
-
-                    addQueryParameter(
-                        name = "sort",
-                        value = when (order) {
-                            SortOrder.UPDATED -> "recently_updated"
-                            SortOrder.POPULARITY -> "total_views"
-                            SortOrder.RATING -> "mal_score"
-                            SortOrder.NEWEST -> "release_date"
-                            SortOrder.ALPHABETICAL -> "title_az"
-                            SortOrder.RELEVANCE -> "most_relevance"
-                            else -> ""
-                        },
-                    )
+                    // Search temporarily disabled due to VRF complexity
+                    throw UnsupportedOperationException("Search temporarily unavailable - use Browse/Filter instead. Search requires unique VRF tokens for each query, which needs complex WebView interaction.")
                 }
 
                 else -> {
@@ -677,12 +657,12 @@ internal abstract class MangaFireParser(
         val type = urlParts[1]
         val langCode = urlParts[2]
 
-        val vrf = extractVrfToken(
-            operation = "chapter_images",
+        val vrf = extractChapterImagesVrf(
             chapterId = chapterId,
             mangaId = mangaId,
             type = type,
-            langCode = langCode
+            langCode = langCode,
+            chapterNumber = chapter.number
         )
 
         val images = client
