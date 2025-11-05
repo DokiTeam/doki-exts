@@ -546,8 +546,11 @@ internal abstract class MangaFireParser(
             langCode = branch.langCode
         )
 
+        // Use just the ID part for AJAX requests (same as the intercepted URL pattern)
+        val mangaIdPart = mangaId.substringAfterLast('.')
+
         val response = client
-            .httpGet("https://$domain/ajax/read/$mangaId/${branch.type}/${branch.langCode}?vrf=$readVrf")
+            .httpGet("https://$domain/ajax/read/$mangaIdPart/${branch.type}/${branch.langCode}?vrf=$readVrf")
 
         val chapterElements = response.parseJson()
             .getJSONObject("result")
@@ -557,7 +560,7 @@ internal abstract class MangaFireParser(
 
         if (branch.type == "chapter") {
             val doc = client
-                .httpGet("https://$domain/ajax/manga/$mangaId/${branch.type}/${branch.langCode}")
+                .httpGet("https://$domain/ajax/manga/$mangaIdPart/${branch.type}/${branch.langCode}")
                 .parseJson()
                 .getString("result")
                 .let(Jsoup::parseBodyFragment)
