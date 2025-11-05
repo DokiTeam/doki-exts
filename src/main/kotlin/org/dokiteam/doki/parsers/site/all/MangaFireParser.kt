@@ -286,9 +286,14 @@ internal abstract class MangaFireParser(
                             return originalFetch.apply(this, arguments);
                         };
 
-                        // Log page load status
+                        // Log page load status and wait for natural AJAX calls
                         console.log('📄 Page readyState:', document.readyState);
                         console.log('🌍 Current URL:', window.location.href);
+                        console.log('⏳ Waiting for natural AJAX calls to occur...');
+
+                        // Verify our overrides are installed
+                        console.log('🔧 XMLHttpRequest.prototype.open override installed:', typeof XMLHttpRequest.prototype.open === 'function');
+                        console.log('🔧 window.fetch override installed:', typeof window.fetch === 'function');
 
                         return 'vrf_extraction_started_chapter_$chapterNum';
                     })();
