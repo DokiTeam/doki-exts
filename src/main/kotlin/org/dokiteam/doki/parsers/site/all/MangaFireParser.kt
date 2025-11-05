@@ -263,6 +263,8 @@ internal abstract class MangaFireParser(
                 """.trimIndent()
 
                 // Load Blue Lock chapter and extract VRF with crash prevention
+                var vrf: String? = null
+
                 try {
                     context.evaluateJs(blueLockUrl, script)
 
@@ -274,7 +276,6 @@ internal abstract class MangaFireParser(
                         window.capturedVrf || null;
                     """.trimIndent()
 
-                    var vrf: String? = null
                     var attempts = 0
                     val maxAttempts = 6 // Further reduced to prevent crashes
 
