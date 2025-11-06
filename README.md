@@ -56,15 +56,7 @@ JVM and Android applications. This library is a fork / based on [kotatsu-parsers
 
    Note that the `MangaParserSource.DUMMY` parsers cannot be instantiated.
 
-## How to add new source from Kotatsu to Doki ?
-
-Just copy source (parser) from [kotatsu-parsers](https://github.com/KotatsuApp/kotatsu-parsers), change `org.koitharu.kotatsu.parsers` to `org.dokiteam.doki.parsers` and done. Create a new PR (Pull request) and i will approve it 👌
-
-## Projects that use the library
-
-- [Doki](https://github.com/DokiTeam/Doki)
-
 ## DMCA disclaimer
 
-The developers of this application have no affiliation with the content available in the app. It is collected from
-sources freely available through any web browser.
+`¯\_(ツ)_/¯`
+This library is built by contributors, the content inside is all available content, but where is it, no one knows. No one knows how it works.
