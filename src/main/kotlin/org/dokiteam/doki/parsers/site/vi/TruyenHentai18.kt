@@ -57,7 +57,7 @@ internal class TruyenHentai18(context: MangaLoaderContext):
 				buildString {
 					append("$apiSuffix/posts")
 					append("?language=vi")
-
+					
 					append("&order=")
 					append(
 						when (order) {
@@ -171,7 +171,7 @@ internal class TruyenHentai18(context: MangaLoaderContext):
 	}
 
 	override suspend fun getDetails(manga: Manga): Manga {
-		val fullUrl = "https://$domain/vi/" + manga.url + ".html"
+        val fullUrl = "https://$domain/vi/" + manga.url + ".html"
 		val doc = webClient.httpGet(fullUrl).parseHtml()
 		return manga.copy(
 			chapters = doc.select("div.grid.grid-cols-1.md\\:grid-cols-2.gap-4 a.block")
@@ -191,7 +191,7 @@ internal class TruyenHentai18(context: MangaLoaderContext):
 						source = source,
 					)
 				}
-		)
+			)
 	}
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {

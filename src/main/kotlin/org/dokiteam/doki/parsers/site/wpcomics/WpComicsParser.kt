@@ -213,6 +213,7 @@ internal abstract class WpComicsParser(
 	protected open val selectDesc = "div.detail-content p"
 	protected open val selectState = "div.col-info li.status p:not(.name)"
 	protected open val selectAut = "div.col-info li.author p:not(.name), li.author p.col-xs-8"
+	protected open val selectTag = "div.col-info li.kind p:not(.name) a, li.kind p.col-xs-8 a"
 
 	override suspend fun getDetails(manga: Manga): Manga = coroutineScope {
 		val fullUrl = manga.url.toAbsoluteUrl(domain)

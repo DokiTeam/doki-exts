@@ -2,6 +2,7 @@ package org.dokiteam.doki.parsers.site.wpcomics.vi
 
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import org.dokiteam.doki.parsers.Broken
 import org.dokiteam.doki.parsers.MangaLoaderContext
 import org.dokiteam.doki.parsers.MangaSourceParser
 import org.dokiteam.doki.parsers.model.*
@@ -9,7 +10,6 @@ import org.dokiteam.doki.parsers.site.wpcomics.WpComicsParser
 import org.dokiteam.doki.parsers.util.*
 import org.dokiteam.doki.parsers.util.json.getStringOrNull
 import java.text.SimpleDateFormat
-import org.dokiteam.doki.parsers.Broken
 
 @Broken("Need to fix coverUrl")
 @MangaSourceParser("NETTRUYENX", "NetTruyenX", "vi")

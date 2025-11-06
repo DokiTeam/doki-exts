@@ -134,6 +134,7 @@ internal abstract class MadaraParser(
 		"en curso",
 		"ongoing",
 		"on going",
+        "OnGoing",
 		"ativo",
 		"en cours",
 		"en cours \uD83D\uDFE2",
@@ -478,7 +479,7 @@ internal abstract class MadaraParser(
 		return elements.map { div ->
 			val href = div.selectFirstOrThrow("a").attrAsRelativeUrl("href")
 			val summary = div.selectFirst(".tab-summary") ?: div.selectFirst(".item-summary")
-			val author = summary?.selectFirst(".mg_author")?.selectFirst("a")?.ownText()
+			val author = summary?.selectFirst(".mg_author, .mg_artists")?.selectFirst("a")?.ownText()
 			Manga(
 				id = generateUid(href),
 				url = href,
@@ -549,7 +550,7 @@ internal abstract class MadaraParser(
 		"div.post-content_item:contains(Status), div.post-content_item:contains(Statut), " +
 			"div.post-content_item:contains(État), div.post-content_item:contains(حالة العمل), div.post-content_item:contains(Estado), div.post-content_item:contains(สถานะ)," +
 			"div.post-content_item:contains(Stato), div.post-content_item:contains(Durum), div.post-content_item:contains(Statüsü), div.post-content_item:contains(Статус)," +
-            "div.post-content_item:contains(状态), div.post-content_item:contains(الحالة), div.post-content_item:contains(Tình trạng)"
+			"div.post-content_item:contains(状态), div.post-content_item:contains(الحالة), div.post-content_item:contains(Tình trạng)"
 	protected open val selectAlt =
 		".post-content_item:contains(Alt) .summary-content, .post-content_item:contains(Nomes alternativos: ) .summary-content"
 
@@ -567,7 +568,7 @@ internal abstract class MadaraParser(
 
 		val href = doc.selectFirst("head meta[property='og:url']")?.attr("content")?.toRelativeUrl(domain) ?: manga.url
 		val testCheckAsync = doc.select(selectTestAsync)
-		val chaptersDeferred = if (testCheckAsync.isNullOrEmpty()) {
+		val chaptersDeferred = if (testCheckAsync.isEmpty()) {
 			async { loadChapters(href, doc) }
 		} else {
 			async { getChapters(manga, doc) }

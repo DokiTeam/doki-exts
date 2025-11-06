@@ -110,7 +110,7 @@ internal class Misskon(context: MangaLoaderContext) : PagedMangaParser(context, 
             // Single page gallery
             return doc.select("div.post-inner > div.entry > p > img")
                 .mapNotNull { img -> img.absUrl("data-src") }
-                .mapIndexed { _, url ->
+                .mapIndexed { i, url ->
                     MangaPage(
                         id = generateUid(url),
                         url = url,

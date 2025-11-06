@@ -227,7 +227,8 @@ internal class TopTruyen(context: MangaLoaderContext) :
 				url.contains("toptruyentv6.jpg") ||
 				url.contains("toptruyentv7.jpg") ||
 				url.contains("toptruyentv8.jpg") ||
-				url.contains("img_001_1743221470.png")) { // Remove ads images
+				url.contains("img_001_1743221470.png") ||
+                url.contains("toptruyentv9.jpg") ) { // Remove ads images
 				return@mapNotNull null
 			}
 

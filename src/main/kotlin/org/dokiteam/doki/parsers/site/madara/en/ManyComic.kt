@@ -1,0 +1,16 @@
+package org.dokiteam.doki.parsers.site.madara.en
+
+import org.dokiteam.doki.parsers.MangaLoaderContext
+import org.dokiteam.doki.parsers.MangaSourceParser
+import org.dokiteam.doki.parsers.model.ContentType
+import org.dokiteam.doki.parsers.model.MangaParserSource
+import org.dokiteam.doki.parsers.site.madara.MadaraParser
+import org.dokiteam.doki.parsers.Broken
+
+@Broken
+@MangaSourceParser("MANYCOMIC", "ManyComic", "en", ContentType.HENTAI)
+internal class ManyComic(context: MangaLoaderContext) :
+	MadaraParser(context, MangaParserSource.MANYCOMIC, "manycomic.com") {
+	override val postReq = true
+	override val tagPrefix = "comic-genre/"
+}

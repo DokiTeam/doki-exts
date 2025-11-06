@@ -13,7 +13,9 @@ import org.dokiteam.doki.parsers.util.mapNotNullToSet
 import org.dokiteam.doki.parsers.util.parseHtml
 import org.dokiteam.doki.parsers.util.textOrNull
 import org.dokiteam.doki.parsers.util.toAbsoluteUrl
+import org.dokiteam.doki.parsers.Broken
 
+@Broken // The website is not responding, it may be closed.
 @MangaSourceParser("HAMTRUYEN", "Ham Truyện", "vi")
 internal class HamTruyen(context: MangaLoaderContext) :
 	WpComicsParser(context, MangaParserSource.HAMTRUYEN, "hamtruyen1.com", 44) {

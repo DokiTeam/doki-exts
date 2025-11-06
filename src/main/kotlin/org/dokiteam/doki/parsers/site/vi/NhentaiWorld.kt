@@ -1,8 +1,8 @@
 package org.dokiteam.doki.parsers.site.vi
 
 import okhttp3.Headers
-import org.dokiteam.doki.parsers.Broken
 import org.json.JSONArray
+import org.dokiteam.doki.parsers.Broken
 import org.dokiteam.doki.parsers.MangaLoaderContext
 import org.dokiteam.doki.parsers.MangaSourceParser
 import org.dokiteam.doki.parsers.config.ConfigKey
@@ -14,12 +14,12 @@ import org.dokiteam.doki.parsers.util.json.getStringOrNull
 import java.text.SimpleDateFormat
 import java.util.*
 
-@Broken("Debugging")
+@Broken
 @MangaSourceParser("NHENTAIWORLD", "Nhentai World", "vi", ContentType.HENTAI)
 internal class NhentaiWorld(context: MangaLoaderContext) :
 	PagedMangaParser(context, MangaParserSource.NHENTAIWORLD, 24) {
 
-	override val configKeyDomain = ConfigKey.Domain("nhentaiclub.icu")
+	override val configKeyDomain = ConfigKey.Domain("nhentaiworld-h1.art")
 
 	override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
 		super.onCreateConfig(keys)
