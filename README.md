@@ -46,10 +46,10 @@ This library provides "a lot" of junk files to output some content available on 
 3. Usage in code
 
    ```kotlin
-   val parser = mangaLoaderContext.newParserInstance(MangaParserSource.YOUR_MOM_FAT)
+   val exts = m*ng*Lo*derCont*xt.newP*rs*rInst*nce(M*ng*P*rs*rS*urc*.YOUR_MOM_FAT)
    ```
 
-   `m*ng*LoaderContext` is an implementation of the `M*ng*Lo*derCont*xt` class.
+   `m*ng*Lo*d*rCont*xt` is an implementation of the `M*ng*Lo*derCont*xt` class.
    See examples: Not available, maybe ???
 
    Note that the `M*ng*P*rs*rS*ur*.DUMMY` exts cannot be instantiated.
