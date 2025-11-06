@@ -1,9 +1,8 @@
 # doki-exts
 
-This library provides a collection of manga parsers for convenient access manga available on the web. It can be used in
-JVM and Android applications. This library is a fork / based on [kotatsu-parsers](https://github.com/KotatsuApp/kotatsu-parsers)
+This library provides "a lot" of junk files to output some content available on the console. This library can be used in JVM and Android applications, but no one knows how to use them, not even the person who created this repository knows... This library is a fork / based on ko-
 
-![Sources count](https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2FDokiTeam%2Fdoki-exts%2Frefs%2Fheads%2Fmain%2F.github%2Fsummary.yaml&query=total&label=manga%20sources&color=%23E9321C) [![](https://jitpack.io/v/DokiTeam/doki-exts.svg)](https://jitpack.io/#DokiTeam/doki-exts) ![License](https://img.shields.io/github/license/KotatsuApp/Kotatsu)
+[![](https://jitpack.io/v/DokiTeam/doki-exts.svg)](https://jitpack.io/#DokiTeam/doki-exts) ![License](https://img.shields.io/github/license/KotatsuApp/Kotatsu)
 
 ## Usage
 
@@ -18,19 +17,19 @@ JVM and Android applications. This library is a fork / based on [kotatsu-parsers
    }
    ```
 
-2. Add the dependency
+2. Add the dependency (First 10 characters in commit hash):
 
    For Java/Kotlin project:
     ```groovy
     dependencies {
-        implementation("com.github.DokiTeam:doki-exts:$parsers_version")
+        implementation("com.github.DokiTeam:doki-exts:$commit_hash")
     }
     ```
 
    For Android project:
     ```groovy
     dependencies {
-        implementation("com.github.DokiTeam:doki-exts:$parsers_version") {
+        implementation("com.github.DokiTeam:doki-exts:$commit_hash") {
             exclude group: 'org.json', module: 'json'
         }
     }
@@ -47,14 +46,13 @@ JVM and Android applications. This library is a fork / based on [kotatsu-parsers
 3. Usage in code
 
    ```kotlin
-   val parser = mangaLoaderContext.newParserInstance(MangaParserSource.MANGADEX)
+   val parser = mangaLoaderContext.newParserInstance(MangaParserSource.YOUR_MOM_FAT)
    ```
 
-   `mangaLoaderContext` is an implementation of the `MangaLoaderContext` class.
-   See examples
-   of [Android](https://github.com/DokiTeam/Doki/blob/devel/app/src/main/kotlin/org/dokiteam/doki/core/parser/MangaLoaderContextImpl.kt)
+   `m*ng*LoaderContext` is an implementation of the `M*ng*Lo*derCont*xt` class.
+   See examples: Not available, maybe ???
 
-   Note that the `MangaParserSource.DUMMY` parsers cannot be instantiated.
+   Note that the `M*ng*P*rs*rS*ur*.DUMMY` exts cannot be instantiated.
 
 ## DMCA disclaimer
 
