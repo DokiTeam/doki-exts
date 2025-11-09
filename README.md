@@ -1,60 +1,46 @@
-# doki-exts
+# Extensions for Doki (Source code)
 
-This library provides "a lot" of junk files to output some content available on the console. This library can be used in JVM and Android applications, but no one knows how to use them, not even the person who created this repository knows... This library is a fork / based on ko-
+### Please give the repo a :star:
 
-[![](https://jitpack.io/v/DokiTeam/doki-exts.svg)](https://jitpack.io/#DokiTeam/doki-exts) ![License](https://img.shields.io/github/license/KotatsuApp/Kotatsu)
+| Stars | Need help? |
+|-------|---------|
+| [![Stars](https://img.shields.io/github/stars/DokiTeam/doki-exts.svg?style=flat)](https://github.com/keiyoushi/extensions-source/actions/workflows/build_push.yml) | [![Discord](https://img.shields.io/discord/1435615296202477581.svg?label=discord&labelColor=7289da&color=2c2f33&style=flat)](https://discord.gg/PTd2bYgz9m) |
 
-## Usage
+## Contribute
+**👋 You can contribute new sources / push bug fixes for existing sources in this repository, but please read this document first: [CONTRIBUTING](https://github.com/KotatsuApp/kotatsu-parsers/blob/master/CONTRIBUTING.md) (from kotatsu-parsers). Remember to change the package name and dependencies too!**
 
-1. Add it to your root build.gradle at the end of repositories:
+### Doki (Source code)
 
-   ```groovy
-   allprojects {
-	   repositories {
-		   ...
-		   maven { url 'https://jitpack.io' }
-	   }
-   }
-   ```
+https://github.com/DokiTeam/Doki
 
-2. Add the dependency (First 10 characters in commit hash):
+### Report app issues
 
-   For Java/Kotlin project:
-    ```groovy
-    dependencies {
-        implementation("com.github.DokiTeam:doki-exts:$commit_hash")
-    }
-    ```
+https://github.com/DokiTeam/Doki/issues/new/
 
-   For Android project:
-    ```groovy
-    dependencies {
-        implementation("com.github.DokiTeam:doki-exts:$commit_hash") {
-            exclude group: 'org.json', module: 'json'
-        }
-    }
-    ```
+### Report build issues
 
-   Versions are available on [JitPack](https://jitpack.io/#DokiTeam/doki-exts)
+https://github.com/DokiTeam/build-apps/issues/new
 
-   When used in Android
-   projects, [core library desugaring](https://developer.android.com/studio/write/java8-support#library-desugaring) with
-   the [NIO specification](https://developer.android.com/studio/write/java11-nio-support-table) should be enabled to
-   support Java 8+ features.
+### Report extension issues
 
+https://github.com/DokiTeam/doki-exts/issues/new/
 
-3. Usage in code
+****
 
-   ```kotlin
-   val exts = m*ng*Lo*derCont*xt.newP*rs*rInst*nce(M*ng*P*rs*rS*urc*.YOUR_MOM_FAT)
-   ```
+### License
 
-   `m*ng*Lo*d*rCont*xt` is an implementation of the `M*ng*Lo*derCont*xt` class.
-   See examples: Not available, maybe ???
+[![GNU GPLv3 Image](https://www.gnu.org/graphics/gplv3-127x51.png)](http://www.gnu.org/licenses/gpl-3.0.en.html)
 
-   Note that the `M*ng*P*rs*rS*ur*.DUMMY` exts cannot be instantiated.
+<div align="left">
 
-## DMCA disclaimer
+You may copy, distribute and modify the software as long as you track changes/dates in source files. Any modifications
+to or software including (via compiler) GPL-licensed code must also be made available under the GPL along with build &
+install instructions.
 
-`¯\_(ツ)_/¯`
-This library is built by contributors, the content inside is all available content, but where is it, no one knows. No one knows how it works.
+</div>
+
+### Disclaimer
+
+**`¯\_(ツ)_/¯`**
+
+This source has been built by contributors / users, the content inside is all available content, but where is it, no one knows. No one knows how it works.
