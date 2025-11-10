@@ -12,6 +12,10 @@
 
 <i>**👉 Make sure you change all package names and dependencies to match the library!**</i>
 
+### Automation for Doki (Source code)
+
+https://github.com/DokiTeam/build-apps
+
 ### Doki (Source code)
 
 https://github.com/DokiTeam/Doki
@@ -22,7 +26,7 @@ https://github.com/DokiTeam/Doki/issues/new/
 
 ### Report build issues
 
-https://github.com/DokiTeam/build-apps/issues/new
+https://github.com/DokiTeam/build-apps/issues/new/
 
 ### Report extension issues
 
