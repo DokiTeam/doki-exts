@@ -12,6 +12,8 @@
 
 <i>**👉 Make sure you change all package names and dependencies to match the library!**</i>
 
+---------------------------------------
+
 ### Automation for Doki (Source code)
 
 https://github.com/DokiTeam/build-apps
@@ -50,4 +52,4 @@ install instructions.
 
 **`¯\_(ツ)_/¯`**
 
-This source has been built by contributors / users, the content inside is all available content, but where is it, no one knows. No one knows how it works.
+This source has been built by contributors / users, the content inside has been provided by **[Gemini](https://gemini.google.com/)**, but where is it, no one knows. No one knows how it works.
