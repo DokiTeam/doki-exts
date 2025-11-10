@@ -4,7 +4,7 @@
 
 | Stars | Need help? |
 |-------|---------|
-| [![Stars](https://img.shields.io/github/stars/DokiTeam/doki-exts.svg?style=flat)](https://github.com/keiyoushi/extensions-source/actions/workflows/build_push.yml) | [![Discord](https://img.shields.io/discord/1435615296202477581.svg?label=discord&labelColor=7289da&color=2c2f33&style=flat)](https://discord.gg/PTd2bYgz9m) |
+| [![Stars](https://img.shields.io/github/stars/DokiTeam/doki-exts.svg?style=flat)](https://github.com/DokiTeam/doki-exts) | [![Discord](https://img.shields.io/discord/1435615296202477581.svg?label=discord&labelColor=7289da&color=2c2f33&style=flat)](https://discord.gg/PTd2bYgz9m) |
 
 ## Contribute
 **👋 You can contribute new sources / push bug fixes for existing sources in this repository, but please read this document first: [CONTRIBUTING](https://github.com/KotatsuApp/kotatsu-parsers/blob/master/CONTRIBUTING.md).**
