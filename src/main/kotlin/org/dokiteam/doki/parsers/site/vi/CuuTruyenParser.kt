@@ -137,11 +137,7 @@ internal class CuuTruyenParser(context: MangaLoaderContext) :
             append(pageSize)
         }
 
-        // prevent throw e in app
-        val json = runCatching {
-            webClient.httpGet("https://$domain$apiSuffix$url").parseJson()
-        }.getOrNull() ?: return emptyList()
-
+        val json = webClient.httpGet("https://$domain$apiSuffix$url").parseJson()
         val data = json.optJSONArray("data")
             ?: json.getJSONObject("data").getJSONArray("new_chapter_mangas")
             ?: json.getJSONObject("data").getJSONArray("mangas")
