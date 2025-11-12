@@ -1,16 +1,12 @@
-name: Extensions test for PRs
+name: Check & Test latest extensions
 
 on:
-    workflow_dispatch:
-    pull_request:
-        paths:
-            - 'src/main/kotlin/org/dokiteam/doki/parsers/**'
-
-permissions:
-    contents: read
+    push:
+        branches:
+            - base
 
 jobs:
-    build-and-test:
+    check-and-build:
         runs-on: ubuntu-latest
         steps:
             -   name: Checkout repository 🌏
