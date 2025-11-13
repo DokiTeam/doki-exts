@@ -39,7 +39,7 @@ import java.util.Locale
 internal class Ikiru(context: MangaLoaderContext) :
 	PagedMangaParser(context, MangaParserSource.IKIRU, 24, 24) {
 
-	override val configKeyDomain = ConfigKey.Domain("01.ikiru.wtf")
+	override val configKeyDomain = ConfigKey.Domain("02.ikiru.wtf")
 	override val sourceLocale: Locale = Locale.ENGLISH
 
 	override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
@@ -79,7 +79,7 @@ internal class Ikiru(context: MangaLoaderContext) :
 	private suspend fun getNonce(): String {
 		if (nonce == null) {
 			val json =
-				webClient.httpGet("https://${domain}/ajax-call?type=search_form&action=get_nonce")
+				webClient.httpGet("https://${domain}/wp-admin/admin-ajax.php?type=search_form&action=get_nonce")
 			val html = json.parseHtml()
 			val nonceValue = html.select("input[name=search_nonce]").attr("value")
 			nonce = nonceValue
@@ -87,13 +87,12 @@ internal class Ikiru(context: MangaLoaderContext) :
 		return nonce!!
 	}
 
-
 	override suspend fun getListPage(
 		page: Int,
 		order: SortOrder,
 		filter: MangaListFilter,
 	): List<Manga> {
-		val url = "https://${domain}/ajax-call"
+		val url = "https://${domain}/wp-admin/admin-ajax.php"
 
 		val formParts = mutableMapOf<String, String>()
 		formParts["action"] = "advanced_search"
@@ -152,7 +151,6 @@ internal class Ikiru(context: MangaLoaderContext) :
 			SortOrder.RATING -> "rating"
 			else -> "popular"
 		}
-
 
 		val html = webClient.httpPost(url, form = formParts).parseHtml()
 		return parseMangaList(html)
