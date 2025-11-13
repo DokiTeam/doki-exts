@@ -1,6 +1,9 @@
 package org.dokiteam.doki.parsers.site.id
 
 import okhttp3.Headers
+import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import org.json.JSONArray
 import org.jsoup.nodes.Document
 import org.dokiteam.doki.parsers.MangaLoaderContext
@@ -22,6 +25,7 @@ import org.dokiteam.doki.parsers.model.RATING_UNKNOWN
 import org.dokiteam.doki.parsers.model.SortOrder
 import org.dokiteam.doki.parsers.util.attrAsAbsoluteUrl
 import org.dokiteam.doki.parsers.util.attrAsRelativeUrl
+import org.dokiteam.doki.parsers.util.await
 import org.dokiteam.doki.parsers.util.generateUid
 import org.dokiteam.doki.parsers.util.mapNotNullToSet
 import org.dokiteam.doki.parsers.util.parseHtml
@@ -170,7 +174,9 @@ internal class Ikiru(context: MangaLoaderContext) :
             formParts["query"] = "[]"
         }
 
-        val html = webClient.httpPost(url, form = formParts).parseHtml()
+        val extraHeaders = Headers.headersOf("Content-Type", "multipart/form-data")
+
+        val html = httpPost(url, formParts, extraHeaders = extraHeaders)
 		return parseMangaList(html)
 	}
 
@@ -423,4 +429,28 @@ internal class Ikiru(context: MangaLoaderContext) :
 			0
 		}
 	}
+
+    // Utils
+    private val multipartHttpClient by lazy {
+        OkHttpClient.Builder()
+            .build()
+    }
+
+    private suspend fun httpPost(url: String, form: Map<String, String>, extraHeaders: Headers? = null): Document {
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+        form.forEach { (k, v) -> body.addFormDataPart(k, v) }
+
+        val requestBuilder = Request.Builder()
+            .url(url)
+            .post(body.build())
+
+        if (extraHeaders != null) {
+            requestBuilder.headers(extraHeaders)
+        }
+
+        val request = requestBuilder.build()
+
+        val response = multipartHttpClient.newCall(request).await()
+        return response.parseHtml()
+    }
 }
