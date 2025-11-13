@@ -1,6 +1,7 @@
 package org.dokiteam.doki.parsers.site.id
 
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONArray
 import org.jsoup.nodes.Document
 import org.dokiteam.doki.parsers.MangaLoaderContext
@@ -164,7 +165,8 @@ internal class Ikiru(context: MangaLoaderContext) :
             formParts["query"] = "[]"
         }
 
-        val html = webClient.httpPost(url, form = formParts).parseHtml()
+        val extraHeaders = Headers.headersOf("Content-Type", "multipart/form-data")
+        val html = webClient.httpPost(url.toHttpUrl(), form = formParts, extraHeaders = extraHeaders).parseHtml()
 		return parseMangaList(html)
 	}
 
@@ -366,17 +368,18 @@ internal class Ikiru(context: MangaLoaderContext) :
 
         val json = org.json.JSONObject(jsonString)
         val genreObject = json.optJSONObject("genre") ?: return emptySet()
-
         val tags = mutableSetOf<MangaTag>()
 
         for (key in genreObject.keys()) {
             val item = genreObject.optJSONObject(key) ?: continue
-            if (item.optString("taxonomy") != "genre") continue
-            val id = item.optInt("term_id").toString()
-            val title = item.optString("name").takeIf { it.isNotBlank() } ?: continue
+            val taxonomy = item.optString("taxonomy")
+            if (taxonomy != "genre") continue
+            val slug = item.optString("slug").takeIf { it.isNotBlank() } ?: continue
+            val name = item.optString("name").takeIf { it.isNotBlank() } ?: continue
+
             tags += MangaTag(
-                key = id,
-                title = title.toTitleCase(),
+                title = name.toTitleCase(),
+                key = slug,
                 source = source
             )
         }
