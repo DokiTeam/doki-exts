@@ -1,7 +1,6 @@
 package org.dokiteam.doki.parsers.site.id
 
 import okhttp3.Headers
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONArray
 import org.jsoup.nodes.Document
 import org.dokiteam.doki.parsers.MangaLoaderContext
@@ -47,6 +46,12 @@ internal class Ikiru(context: MangaLoaderContext) :
 		super.onCreateConfig(keys)
 		keys.add(userAgentKey)
 	}
+
+    override fun getRequestHeaders() = super.getRequestHeaders().newBuilder()
+        .add("Referer", "https://$domain/")
+        .add("Origin", "https://$domain")
+        .add("Content-Type", "multipart/form-data")
+        .build()
 
 	override val availableSortOrders: Set<SortOrder> = EnumSet.of(
 		SortOrder.UPDATED,
@@ -165,8 +170,7 @@ internal class Ikiru(context: MangaLoaderContext) :
             formParts["query"] = "[]"
         }
 
-        val extraHeaders = Headers.headersOf("Content-Type", "multipart/form-data")
-        val html = webClient.httpPost(url.toHttpUrl(), form = formParts, extraHeaders = extraHeaders).parseHtml()
+        val html = webClient.httpPost(url, form = formParts).parseHtml()
 		return parseMangaList(html)
 	}
 
