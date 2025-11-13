@@ -57,7 +57,7 @@ internal class Ikiru(context: MangaLoaderContext) :
 	override val filterCapabilities: MangaListFilterCapabilities
 		get() = MangaListFilterCapabilities(
 			isMultipleTagsSupported = true,
-			isTagsExclusionSupported = false,
+			isTagsExclusionSupported = true,
 			isSearchSupported = true,
 			isSearchWithFiltersSupported = true,
 		)
@@ -87,25 +87,33 @@ internal class Ikiru(context: MangaLoaderContext) :
 		return nonce!!
 	}
 
-	override suspend fun getListPage(
-		page: Int,
-		order: SortOrder,
-		filter: MangaListFilter,
-	): List<Manga> {
-		val url = "https://${domain}/wp-admin/admin-ajax.php"
+	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter, ): List<Manga> {
+		val url = "https://${domain}/wp-admin/admin-ajax.php?action=advanced_search"
 
 		val formParts = mutableMapOf<String, String>()
-		formParts["action"] = "advanced_search"
-		formParts["page"] = page.toString()
-		formParts["nonce"] = getNonce()
+        formParts["nonce"] = getNonce()
 
-		filter.query?.let { formParts["query"] = it }
+        formParts["inclusion"] = "AND"
+        if (filter.tags.isNotEmpty()) {
+            val genreArray = JSONArray(filter.tags.map { it.key })
+            formParts["genre"] = genreArray.toString()
+        } else formParts["genre"] = "[]"
 
-		if (filter.tags.isNotEmpty()) {
-			formParts["genre-relation"] = "AND"
-			val genreArray = JSONArray(filter.tags.map { it.key })
-			formParts["genre"] = genreArray.toString()
-		}
+        formParts["exclusion"] = "AND"
+        if (filter.tagsExclude.isNotEmpty()) {
+            val exGenreArray = JSONArray(filter.tags.map { it.key })
+            formParts["genre_exclude"] = exGenreArray.toString()
+        } else formParts["genre_exclude"] = "[]"
+
+        formParts["page"] = page.toString()
+
+        if (!filter.author.isNullOrEmpty()) {
+            val authorArray = JSONArray(filter.author)
+            formParts["author"] = authorArray.toString()
+        } else formParts["author"] = "[]"
+
+        formParts["artist"] = "[]"
+        formParts["project"] = "0"
 
 		if (filter.types.isNotEmpty()) {
 			val typeArray = JSONArray()
@@ -119,10 +127,10 @@ internal class Ikiru(context: MangaLoaderContext) :
 					else -> {}
 				}
 			}
-			if (typeArray.length() > 0) {
-				formParts["type"] = typeArray.toString()
-			}
-		}
+            formParts["type"] = typeArray.toString()
+		} else {
+            formParts["type"] = "[]"
+        }
 
 		if (filter.states.isNotEmpty()) {
 			val statusArray = JSONArray()
@@ -137,13 +145,11 @@ internal class Ikiru(context: MangaLoaderContext) :
 			if (statusArray.length() > 0) {
 				formParts["status"] = statusArray.toString()
 			}
-		}
+		} else {
+            formParts["status"] = "[]"
+        }
 
-		if (!filter.author.isNullOrEmpty()) {
-			val authorArray = JSONArray(filter.author)
-			formParts["series-author"] = authorArray.toString()
-		}
-
+        formParts["order"] = "desc"
 		formParts["orderby"] = when (order) {
 			SortOrder.UPDATED -> "updated"
 			SortOrder.POPULARITY -> "popular"
@@ -152,7 +158,13 @@ internal class Ikiru(context: MangaLoaderContext) :
 			else -> "popular"
 		}
 
-		val html = webClient.httpPost(url, form = formParts).parseHtml()
+        if (!filter.query.isNullOrEmpty()) {
+            filter.query.let { formParts["query"] = it }
+        } else {
+            formParts["query"] = "[]"
+        }
+
+        val html = webClient.httpPost(url, form = formParts).parseHtml()
 		return parseMangaList(html)
 	}
 
