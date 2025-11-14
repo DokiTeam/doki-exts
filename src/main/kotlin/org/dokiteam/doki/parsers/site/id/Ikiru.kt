@@ -434,23 +434,26 @@ internal class Ikiru(context: MangaLoaderContext) :
     }
 
     private suspend fun httpPost(url: String, form: Map<String, String>, extraHeaders: Headers? = null): Document {
-        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
-        form.forEach { (k, v) -> body.addFormDataPart(k, v) }
-    
-        val requestBuilder = Request.Builder()
-            .url(url)
-            .post(body.build())
-            .addHeader("Referer", "https://${domain}/advanced-search/")
-            .addHeader("Origin", "https://${domain}")
-    
-        extraHeaders?.forEach { name, value ->
-            if (!name.equals("Content-Type", ignoreCase = true)) {
-                requestBuilder.addHeader(name, value)
-            }
-        }
-    
-        val request = requestBuilder.build()
-        val response = multipartHttpClient.newCall(request).await()
-        return response.parseHtml()
-    }
+		val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+		form.forEach { (k, v) -> body.addFormDataPart(k, v) }
+
+		val requestBuilder = Request.Builder()
+			.url(url)
+			.post(body.build())
+			.addHeader("Referer", "https://${domain}/advanced-search/")
+			.addHeader("Origin", "https://${domain}")
+
+		if (extraHeaders != null) {
+			for (name in extraHeaders.names()) {
+				if (!name.equals("Content-Type", ignoreCase = true)) {
+					val value = extraHeaders.get(name) ?: continue
+					requestBuilder.addHeader(name, value)
+				}
+			}
+		}
+
+		val request = requestBuilder.build()
+		val response = multipartHttpClient.newCall(request).await()
+		return response.parseHtml()
+	}
 }
