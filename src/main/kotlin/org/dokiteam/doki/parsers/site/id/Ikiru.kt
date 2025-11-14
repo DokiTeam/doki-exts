@@ -54,7 +54,6 @@ internal class Ikiru(context: MangaLoaderContext) :
     override fun getRequestHeaders() = super.getRequestHeaders().newBuilder()
         .add("Referer", "https://$domain/")
         .add("Origin", "https://$domain")
-        .add("Content-Type", "multipart/form-data")
         .build()
 
 	override val availableSortOrders: Set<SortOrder> = EnumSet.of(
@@ -174,9 +173,7 @@ internal class Ikiru(context: MangaLoaderContext) :
             formParts["query"] = "[]"
         }
 
-        val extraHeaders = Headers.headersOf("Content-Type", "multipart/form-data")
-
-        val html = httpPost(url, formParts, extraHeaders = extraHeaders)
+        val html = httpPost(url, formParts)
 		return parseMangaList(html)
 	}
 
@@ -439,17 +436,20 @@ internal class Ikiru(context: MangaLoaderContext) :
     private suspend fun httpPost(url: String, form: Map<String, String>, extraHeaders: Headers? = null): Document {
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
         form.forEach { (k, v) -> body.addFormDataPart(k, v) }
-
+    
         val requestBuilder = Request.Builder()
             .url(url)
             .post(body.build())
-
-        if (extraHeaders != null) {
-            requestBuilder.headers(extraHeaders)
+            .addHeader("Referer", "https://${domain}/advanced-search/")
+            .addHeader("Origin", "https://${domain}")
+    
+        extraHeaders?.forEach { name, value ->
+            if (!name.equals("Content-Type", ignoreCase = true)) {
+                requestBuilder.addHeader(name, value)
+            }
         }
-
+    
         val request = requestBuilder.build()
-
         val response = multipartHttpClient.newCall(request).await()
         return response.parseHtml()
     }
