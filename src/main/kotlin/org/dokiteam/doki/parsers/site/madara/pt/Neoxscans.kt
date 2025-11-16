@@ -9,13 +9,15 @@ import org.dokiteam.doki.parsers.site.madara.MadaraParser
 import org.dokiteam.doki.parsers.util.*
 import java.text.SimpleDateFormat
 
-@MangaSourceParser("NEOX_SCANS", "NeoxScans", "pt")
+@MangaSourceParser("NEOX_SCANS", "Manga Livre", "pt")
 internal class Neoxscans(context: MangaLoaderContext) :
-	MadaraParser(context, MangaParserSource.NEOX_SCANS, "mangalivre.net", 18) {
+	MadaraParser(context, MangaParserSource.NEOX_SCANS, "mangalivre.tv", 18) {
+
+    override val withoutAjax = false
 	override val datePattern = "dd/MM/yyyy"
 
 	override suspend fun loadChapters(mangaUrl: String, document: Document): List<MangaChapter> {
-		val url = mangaUrl.toAbsoluteUrl(domain).removeSuffix('/') + "/ajax/chapters/"
+		val url = mangaUrl.toAbsoluteUrl(domain).removeSuffix('/') + "/ajax/chapters?t=1"
 		val doc = webClient.httpPost(url, emptyMap()).parseHtml()
 		val dateFormat = SimpleDateFormat(datePattern, sourceLocale)
 		return doc.select(selectChapter).mapChapters(reversed = true) { i, li ->
