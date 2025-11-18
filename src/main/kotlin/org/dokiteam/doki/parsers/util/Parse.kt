@@ -23,18 +23,11 @@ internal const val SCHEME_HTTPS = "https"
 // TODO suspend
 public fun Response.parseHtml(): Document = use { response ->
     val body = response.body
-    val encoding = response.header("Content-Encoding") ?: ""
     val charset = body.contentType()?.charset() ?: Charsets.UTF_8
     val baseUri = response.request.url.toString()
-
-    val inputStream = when {
-        encoding.equals("gzip", ignoreCase = true) -> GZIPInputStream(body.byteStream())
-        else -> body.byteStream()
-    }
-
-    inputStream.use { stream ->
-        Jsoup.parse(stream, charset.name(), baseUri)
-    }
+    val bytes = body.byteStream().use { it.readBytes() }
+    val html = String(bytes, charset)
+    Jsoup.parse(html, baseUri)
 }
 
 /**
