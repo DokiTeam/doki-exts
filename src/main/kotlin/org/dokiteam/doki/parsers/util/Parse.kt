@@ -26,23 +26,8 @@ public fun Response.parseHtml(): Document = use { response ->
     val body = response.body
     val baseUri = response.request.url.toString()
     val bytes = body.byteStream().use { it.readBytes() }
-    val charset = body.contentType()?.charset() ?: run {
-        detectCharsetFromBytes(bytes) ?: Charsets.UTF_8
-    }
-    val html = try {
-        String(bytes, charset)
-    } catch (_: Exception) {
-        String(bytes, Charsets.UTF_8)
-    }
+    val html = String(bytes, Charsets.ISO_8859_1)
     Jsoup.parse(html, baseUri)
-}
-
-private fun detectCharsetFromBytes(bytes: ByteArray): Charset? {
-    val preview = String(bytes.take(1024).toByteArray(), Charsets.ISO_8859_1)
-    val charsetRegex = """charset=["']?([^"'\s>]+)""".toRegex(RegexOption.IGNORE_CASE)
-    return charsetRegex.find(preview)?.groupValues?.get(1)?.let {
-        try { Charset.forName(it) } catch (e: Exception) { null }
-    }
 }
 
 /**
