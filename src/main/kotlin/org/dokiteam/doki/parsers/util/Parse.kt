@@ -10,6 +10,7 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.dokiteam.doki.parsers.InternalParsersApi
 import java.text.DateFormat
+import java.util.zip.GZIPInputStream
 
 private val REGEX_SCHEME_PREFIX = Regex("^\\w{2,6}://", RegexOption.IGNORE_CASE)
 internal const val SCHEME_HTTPS = "https"
@@ -22,8 +23,18 @@ internal const val SCHEME_HTTPS = "https"
 // TODO suspend
 public fun Response.parseHtml(): Document = use { response ->
     val body = response.body
-    val charset = body.contentType()?.charset()?.name()
-    Jsoup.parse(body.byteStream(), charset, response.request.url.toString())
+    val encoding = response.header("Content-Encoding") ?: ""
+    val charset = body.contentType()?.charset() ?: Charsets.UTF_8
+    val baseUri = response.request.url.toString()
+
+    val inputStream = when {
+        encoding.equals("gzip", ignoreCase = true) -> GZIPInputStream(body.byteStream())
+        else -> body.byteStream()
+    }
+
+    inputStream.use { stream ->
+        Jsoup.parse(stream, charset.name(), baseUri)
+    }
 }
 
 /**
