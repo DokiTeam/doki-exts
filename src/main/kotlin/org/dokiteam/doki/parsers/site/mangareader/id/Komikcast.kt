@@ -42,7 +42,7 @@ import java.util.Locale
 
 @MangaSourceParser("KOMIKCAST", "KomikCast", "id")
 internal class Komikcast(context: MangaLoaderContext) :
-	MangaReaderParser(context, MangaParserSource.KOMIKCAST, "komikcast.li", pageSize = 60, searchPageSize = 28) {
+	MangaReaderParser(context, MangaParserSource.KOMIKCAST, "komikcast03.com", pageSize = 60, searchPageSize = 28) {
 
 	override val userAgentKey = ConfigKey.UserAgent(
 		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
