@@ -39,11 +39,11 @@ import java.util.Calendar
 import java.util.EnumSet
 import java.util.Locale
 
-@MangaSourceParser("IKIRU", "Ikiru", "id")
-internal class Ikiru(context: MangaLoaderContext) :
-	PagedMangaParser(context, MangaParserSource.IKIRU, 24, 24) {
+@MangaSourceParser("KIRYUU", "Kiryuu", "id")
+internal class KiryuuParser(context: MangaLoaderContext) :
+	PagedMangaParser(context, MangaParserSource.KIRYUU, 24, 24) {
 
-	override val configKeyDomain = ConfigKey.Domain("02.ikiru.wtf")
+	override val configKeyDomain = ConfigKey.Domain("kiryuu03.com")
 	override val sourceLocale: Locale = Locale.ENGLISH
 
 	override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
@@ -358,35 +358,61 @@ internal class Ikiru(context: MangaLoaderContext) :
 	}
 
     private suspend fun fetchAvailableTags(): Set<MangaTag> {
-        val doc = webClient.httpGet("https://${domain}/advanced-search/").parseHtml()
-        val scriptContent = doc.select("script")
-            .firstOrNull { it.data().contains("var searchTerms") }
-            ?.data()
-            ?: return emptySet()
+        return try {
+            // Try to fetch from WP JSON API first (like Keiyoshi NatsuId)
+            val response = webClient.httpGet("https://${domain}/wp-json/wp/v2/genre?per_page=100&page=1&orderby=count&order=desc")
+            val jsonText = response.body.use { it?.string() } ?: return emptySet()
+            val jsonArray = org.json.JSONArray(jsonText)
+            val tags = mutableSetOf<MangaTag>()
+            
+            for (i in 0 until jsonArray.length()) {
+                val item = jsonArray.getJSONObject(i)
+                val slug = item.optString("slug").takeIf { it.isNotBlank() } ?: continue
+                val name = item.optString("name").takeIf { it.isNotBlank() } ?: continue
+                
+                tags += MangaTag(
+                    title = name.toTitleCase(),
+                    key = slug,
+                    source = source
+                )
+            }
+            tags
+        } catch (e: Exception) {
+            // Fallback to advanced-search page method
+            try {
+                val doc = webClient.httpGet("https://${domain}/advanced-search/").parseHtml()
+                val scriptContent = doc.select("script")
+                    .firstOrNull { it.data().contains("var searchTerms") }
+                    ?.data()
+                    ?: return emptySet()
 
-        val jsonString = scriptContent
-            .substringAfter("var searchTerms =")
-            .substringBeforeLast(";")
-            .trim()
+                val jsonString = scriptContent
+                    .substringAfter("var searchTerms =")
+                    .substringBeforeLast(";")
+                    .trim()
 
-        val json = org.json.JSONObject(jsonString)
-        val genreObject = json.optJSONObject("genre") ?: return emptySet()
-        val tags = mutableSetOf<MangaTag>()
+                val json = org.json.JSONObject(jsonString)
+                val genreObject = json.optJSONObject("genre") ?: return emptySet()
+                val tags = mutableSetOf<MangaTag>()
 
-        for (key in genreObject.keys()) {
-            val item = genreObject.optJSONObject(key) ?: continue
-            val taxonomy = item.optString("taxonomy")
-            if (taxonomy != "genre") continue
-            val slug = item.optString("slug").takeIf { it.isNotBlank() } ?: continue
-            val name = item.optString("name").takeIf { it.isNotBlank() } ?: continue
+                for (key in genreObject.keys()) {
+                    val item = genreObject.optJSONObject(key) ?: continue
+                    val taxonomy = item.optString("taxonomy")
+                    if (taxonomy != "genre") continue
+                    val slug = item.optString("slug").takeIf { it.isNotBlank() } ?: continue
+                    val name = item.optString("name").takeIf { it.isNotBlank() } ?: continue
 
-            tags += MangaTag(
-                title = name.toTitleCase(),
-                key = slug,
-                source = source
-            )
+                    tags += MangaTag(
+                        title = name.toTitleCase(),
+                        key = slug,
+                        source = source
+                    )
+                }
+                tags
+            } catch (e2: Exception) {
+                emptySet()
+            }
         }
-        return tags
     }
 
     private fun parseDate(dateStr: String?): Long {
