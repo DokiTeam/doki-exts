@@ -167,8 +167,8 @@ internal class MangaMoins(context: MangaLoaderContext) :
 			val jo = ja.optJSONObject(i) ?: continue
 			val folder = jo.optString("folder").trim()
 			if (folder.isEmpty()) continue
-			val chapterTitle = jo.optString("title").trim().ifEmpty { null }
 			val chapterNumber = parseChapterNumber(jo.optString("num"), folder)
+			val chapterTitle = buildChapterTitle(chapterNumber, jo.optString("title"))
 			result += MangaChapter(
 				id = generateUid(folder),
 				title = chapterTitle,
@@ -235,6 +235,37 @@ internal class MangaMoins(context: MangaLoaderContext) :
 		if (fromLabel != null) return fromLabel
 		val fromFolder = CHAPTER_NUMBER_REGEX.find(folder)?.groupValues?.getOrNull(1)?.toFloatOrNull()
 		return fromFolder ?: 0f
+	}
+
+	private fun buildChapterTitle(number: Float, rawTitle: String?): String? {
+		val title = rawTitle?.trim()?.takeIf { it.isNotEmpty() }
+		if (number <= 0f) return title
+
+		val formattedNumber = formatChapterNumber(number)
+		if (title == null) {
+			return "Chapitre $formattedNumber"
+		}
+
+		val normalizedTitle = title.lowercase(Locale.ROOT)
+		if (
+			normalizedTitle.startsWith("chapitre") ||
+			normalizedTitle.startsWith("chapter") ||
+			normalizedTitle.startsWith("ch.")
+		) {
+			return title
+		}
+		if (normalizedTitle == formattedNumber || normalizedTitle == "#$formattedNumber") {
+			return "Chapitre $formattedNumber"
+		}
+		return "Chapitre $formattedNumber - $title"
+	}
+
+	private fun formatChapterNumber(number: Float): String {
+		return if (number % 1f == 0f) {
+			number.toInt().toString()
+		} else {
+			number.toString()
+		}
 	}
 
 	private fun buildDetailsCandidates(manga: Manga): List<String> {
@@ -319,7 +350,7 @@ internal class MangaMoins(context: MangaLoaderContext) :
 		private val AUTHORS_SPLIT_PATTERN = Regex("[,&/]")
 		private val WHITESPACES_REGEX = Regex("\\s+")
 		private val CHAPTER_NUMBER_REGEX = Regex("(\\d+(?:\\.\\d+)?)$")
-		private val IMAGE_MTIMES_BLOCK = Regex("imageMtimes\\s*=\\s*\\{([^}]*)}")
+		private val IMAGE_MTIMES_BLOCK = Regex("imageMtimes\\s*=\\s*\\{([^}]*)\\}")
 		private val IMAGE_MTIMES_ENTRY = Regex("[\"']?([0-9]+)[\"']?\\s*:\\s*([0-9]+)")
 	}
 }
