@@ -5,6 +5,7 @@ import org.dokiteam.doki.parsers.MangaLoaderContext
 import org.dokiteam.doki.parsers.MangaSourceParser
 import org.dokiteam.doki.parsers.model.Manga
 import org.dokiteam.doki.parsers.model.MangaChapter
+import org.dokiteam.doki.parsers.model.MangaPage
 import org.dokiteam.doki.parsers.model.MangaParserSource
 import org.dokiteam.doki.parsers.site.madara.MadaraParser
 import org.dokiteam.doki.parsers.util.attrAsRelativeUrl
@@ -25,9 +26,27 @@ internal class MangasOrigines(context: MangaLoaderContext) :
 	override val datePattern = "MMMM d, yyyy"
 	override val tagPrefix = "manga-genres/"
 	override val listUrl = "catalogues/"
+	private val pagesCache = object : LinkedHashMap<String, List<MangaPage>>(64, 0.75f, true) {
+		override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<MangaPage>>?): Boolean {
+			return size > PAGES_CACHE_SIZE
+		}
+	}
 
 	override suspend fun getChapters(manga: Manga, doc: Document): List<MangaChapter> {
 		return parseChapterList(doc.body().select(selectChapter), sourceOrderFallback = true)
+	}
+
+	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+		synchronized(pagesCache) {
+			pagesCache[chapter.url]?.let { return it }
+		}
+		val pages = super.getPages(chapter)
+		if (pages.isNotEmpty()) {
+			synchronized(pagesCache) {
+				pagesCache[chapter.url] = pages
+			}
+		}
+		return pages
 	}
 
 	override suspend fun loadChapters(mangaUrl: String, document: Document): List<MangaChapter> {
@@ -131,6 +150,7 @@ internal class MangasOrigines(context: MangaLoaderContext) :
 	}
 
 	private companion object {
+		private const val PAGES_CACHE_SIZE = 200
 
 		private val CHAPTER_TITLE_NUMBER = Regex("(?i)\\bchap(?:itre|ter)?\\.?\\s*([0-9]+(?:[.,][0-9]+)?)")
 		private val CHAPTER_URL_NUMBER = Regex("(?i)/(?:chapitre|chapter)-([0-9]+(?:-[0-9]+)?)(?:-|/|$)")

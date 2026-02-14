@@ -28,6 +28,7 @@ import org.jsoup.nodes.Document
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.util.EnumSet
+import java.util.LinkedHashMap
 import java.util.Locale
 
 @MangaSourceParser("MANGAMOINS", "MangaMoins", "fr")
@@ -37,6 +38,16 @@ internal class MangaMoins(context: MangaLoaderContext) :
 	override val configKeyDomain = ConfigKey.Domain("mangamoins.com")
 	override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.UPDATED)
 	override val filterCapabilities = MangaListFilterCapabilities(isSearchSupported = true)
+	private val detailsCache = object : LinkedHashMap<String, Manga>(64, 0.75f, true) {
+		override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Manga>?): Boolean {
+			return size > DETAILS_CACHE_SIZE
+		}
+	}
+	private val pagesCache = object : LinkedHashMap<String, List<MangaPage>>(128, 0.75f, true) {
+		override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<MangaPage>>?): Boolean {
+			return size > PAGES_CACHE_SIZE
+		}
+	}
 
 	override fun getRequestHeaders(): Headers = super.getRequestHeaders().newBuilder()
 		.add("Referer", "https://$domain/")
@@ -91,6 +102,10 @@ internal class MangaMoins(context: MangaLoaderContext) :
 	}
 
 	override suspend fun getDetails(manga: Manga): Manga {
+		val cacheKey = buildDetailsCacheKey(manga)
+		synchronized(detailsCache) {
+			detailsCache[cacheKey]?.let { return it }
+		}
 		val json = fetchMangaJson(manga)
 		val info = json.optJSONObject("info")
 		val detailsTitle = info?.optString("title").orEmpty().ifBlank { manga.title }
@@ -101,7 +116,7 @@ internal class MangaMoins(context: MangaLoaderContext) :
 		val canonicalSlug = extractSlugFromMangaUrl(manga.url)
 			?: extractSlugFromMangaUrl(manga.publicUrl)
 			?: detailsTitle.toMangaSlug()
-		return manga.copy(
+		val details = manga.copy(
 			title = detailsTitle,
 			publicUrl = "https://$domain/manga/$canonicalSlug",
 			coverUrl = coverUrl ?: manga.coverUrl,
@@ -110,17 +125,24 @@ internal class MangaMoins(context: MangaLoaderContext) :
 			authors = authors,
 			chapters = chapters.takeIf { it.isNotEmpty() } ?: manga.chapters,
 		)
+		synchronized(detailsCache) {
+			detailsCache[cacheKey] = details
+			detailsCache[canonicalSlug.lowercase(Locale.ROOT)] = details
+		}
+		return details
 	}
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+		val cacheKey = extractScanFolder(chapter.url) ?: chapter.url.lowercase(Locale.ROOT)
+		synchronized(pagesCache) {
+			pagesCache[cacheKey]?.let { return it }
+		}
 		val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain)).parseHtml()
 		val preloaded = doc.select("link[rel=preload][as=image]")
-			.map { it.attr("href").trim() }
-			.filter { it.isNotEmpty() }
-			.map { it.toAbsoluteUrl(domain) }
+			.mapNotNull { sanitizePageUrl(it.attr("href")) }
 			.distinct()
 		if (preloaded.isNotEmpty()) {
-			return preloaded.map { pageUrl ->
+			val pages = preloaded.map { pageUrl ->
 				MangaPage(
 					id = generateUid(pageUrl),
 					url = pageUrl,
@@ -128,9 +150,19 @@ internal class MangaMoins(context: MangaLoaderContext) :
 					source = chapter.source,
 				)
 			}
+			synchronized(pagesCache) {
+				pagesCache[cacheKey] = pages
+			}
+			return pages
 		}
 		val folder = extractScanFolder(chapter.url) ?: return emptyList()
-		return parsePagesFromScript(doc, folder, chapter.source)
+		val pages = parsePagesFromScript(doc, folder, chapter.source)
+		if (pages.isNotEmpty()) {
+			synchronized(pagesCache) {
+				pagesCache[cacheKey] = pages
+			}
+		}
+		return pages
 	}
 
 	private suspend fun fetchMangaJson(manga: Manga): JSONObject {
@@ -198,19 +230,29 @@ internal class MangaMoins(context: MangaLoaderContext) :
 				page to mtime
 			}
 			.sortedBy { it.first }
-			.map { (page, mtime) ->
-				val pageName = page.toString().padStart(2, '0')
-				"/files/scans/$folder/$pageName.png?v=$mtime"
-			}
-			.distinct()
-		return pairs.map { pageUrl ->
+				.mapNotNull { (page, mtime) ->
+					val pageName = page.toString().padStart(2, '0')
+					sanitizePageUrl("/files/scans/$folder/$pageName.png?v=$mtime")
+				}
+				.distinct()
+			return pairs.map { pageUrl ->
 			MangaPage(
 				id = generateUid(pageUrl),
 				url = pageUrl,
 				preview = null,
 				source = source,
 			)
-		}.toList()
+			}.toList()
+	}
+
+	private fun sanitizePageUrl(raw: String?): String? {
+		val candidate = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+		val absolute = candidate.toAbsoluteUrl(domain)
+		val url = absolute.toHttpUrlOrNull() ?: return null
+		if (url.queryParameterNames.contains("v") && url.queryParameter("v").isNullOrBlank()) {
+			return null
+		}
+		return url.newBuilder().build().toString()
 	}
 
 	private fun parseState(status: String?): MangaState? {
@@ -303,6 +345,15 @@ internal class MangaMoins(context: MangaLoaderContext) :
 		return DETAILS_SCORE_EMPTY
 	}
 
+	private fun buildDetailsCacheKey(manga: Manga): String {
+		return (
+			extractSlugFromMangaUrl(manga.url)
+				?: extractSlugFromMangaUrl(manga.publicUrl)
+				?: manga.title.toMangaSlug()
+			)
+			.lowercase(Locale.ROOT)
+	}
+
 	private fun extractScanFolder(url: String): String? {
 		val httpUrl = url.toAbsoluteUrl(domain).toHttpUrlOrNull() ?: return null
 		httpUrl.queryParameter("scan")?.takeIf { it.isNotBlank() }?.let { return it }
@@ -344,10 +395,12 @@ internal class MangaMoins(context: MangaLoaderContext) :
 
 		private const val API_LIMIT = 12
 		private const val UNKNOWN_MANGA_TITLE = "Unknown manga"
-		private const val DETAILS_SCORE_EMPTY = 0
-		private const val DETAILS_SCORE_WITH_METADATA = 1
-		private const val DETAILS_SCORE_WITH_CHAPTERS = 2
-		private val AUTHORS_SPLIT_PATTERN = Regex("[,&/]")
+			private const val DETAILS_SCORE_EMPTY = 0
+			private const val DETAILS_SCORE_WITH_METADATA = 1
+			private const val DETAILS_SCORE_WITH_CHAPTERS = 2
+			private const val DETAILS_CACHE_SIZE = 200
+			private const val PAGES_CACHE_SIZE = 400
+			private val AUTHORS_SPLIT_PATTERN = Regex("[,&/]")
 		private val WHITESPACES_REGEX = Regex("\\s+")
 		private val CHAPTER_NUMBER_REGEX = Regex("(\\d+(?:\\.\\d+)?)$")
 		private val IMAGE_MTIMES_BLOCK = Regex("imageMtimes\\s*=\\s*\\{([^}]*)\\}")

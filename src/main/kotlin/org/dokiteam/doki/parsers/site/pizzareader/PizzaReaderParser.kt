@@ -24,6 +24,16 @@ internal abstract class PizzaReaderParser(
 ) : SinglePageMangaParser(context, source) {
 
 	override val configKeyDomain = ConfigKey.Domain(domain)
+	private val detailsCache = object : LinkedHashMap<String, Manga>(64, 0.75f, true) {
+		override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Manga>?): Boolean {
+			return size > DETAILS_CACHE_SIZE
+		}
+	}
+	private val pagesCache = object : LinkedHashMap<String, List<MangaPage>>(128, 0.75f, true) {
+		override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<MangaPage>>?): Boolean {
+			return size > PAGES_CACHE_SIZE
+		}
+	}
 
 	override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
 		super.onCreateConfig(keys)
@@ -222,8 +232,7 @@ internal abstract class PizzaReaderParser(
 			title = j.getString("title"),
 			description = j.getString("description"),
 			altTitles = altTitles,
-			rating = j.getString("rating").toFloatOrNull()?.div(10f)
-				?: RATING_UNKNOWN,
+			rating = parseRating(j.opt("rating")),
 			tags = emptySet(),
 			authors = setOfNotNull(author),
 			state = when (j.getStringOrNull("status")?.trim()?.lowercase(Locale.ROOT)) {
@@ -238,12 +247,24 @@ internal abstract class PizzaReaderParser(
 		)
 	}
 
+	private fun parseRating(raw: Any?): Float {
+		val numeric = when (raw) {
+			is Number -> raw.toFloat()
+			is String -> raw.toFloatOrNull()
+			else -> null
+		} ?: return RATING_UNKNOWN
+		return numeric.div(10f)
+	}
+
 	override suspend fun getDetails(manga: Manga): Manga = coroutineScope {
+		synchronized(detailsCache) {
+			detailsCache[manga.url]?.let { return@coroutineScope it }
+		}
 		val fullUrl = manga.url.toAbsoluteUrl(domain)
 		val json = webClient.httpGet(fullUrl).parseJson().getJSONObject("comic")
 		val chapters = JSONArray(json.getJSONArray("chapters").asTypedList<JSONObject>().reversed())
 
-		manga.copy(
+		val details = manga.copy(
 			tags = json.getJSONArray("genres").mapJSONToSet {
 				MangaTag(
 					key = it.getString("slug"),
@@ -269,11 +290,19 @@ internal abstract class PizzaReaderParser(
 					branch = null,
 					source = source,
 				)
-			},
-		)
+				},
+			)
+		synchronized(detailsCache) {
+			detailsCache[manga.url] = details
+			detailsCache[details.url] = details
+		}
+		details
 	}
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+		synchronized(pagesCache) {
+			pagesCache[chapter.url]?.let { return it }
+		}
 		val fullUrl = chapter.url.toAbsoluteUrl(domain)
 		val pages = webClient.httpGet(fullUrl)
 			.parseJson()
@@ -294,9 +323,14 @@ internal abstract class PizzaReaderParser(
 					preview = null,
 					source = source,
 				),
-			)
-		}
-		return result
+				)
+			}
+			if (result.isNotEmpty()) {
+				synchronized(pagesCache) {
+					pagesCache[chapter.url] = result
+				}
+			}
+			return result
 	}
 
 	private fun parseChapterNumber(chapter: JSONObject, fallback: Float): Float {
@@ -363,7 +397,9 @@ internal abstract class PizzaReaderParser(
 			"yyyy-MM-dd'T'HH:mm:ss'Z'",
 			"yyyy-MM-dd HH:mm:ss",
 		)
-		private val CHAPTER_NUMBER_FROM_LABEL_REGEX = Regex("ch(?:apter)?\\.?\\s*(\\d+(?:\\.\\d+)?)", RegexOption.IGNORE_CASE)
-		private val CHAPTER_NUMBER_LAST_REGEX = Regex("(\\d+(?:\\.\\d+)?)(?!.*\\d)")
-	}
+			private val CHAPTER_NUMBER_FROM_LABEL_REGEX = Regex("ch(?:apter)?\\.?\\s*(\\d+(?:\\.\\d+)?)", RegexOption.IGNORE_CASE)
+			private val CHAPTER_NUMBER_LAST_REGEX = Regex("(\\d+(?:\\.\\d+)?)(?!.*\\d)")
+			private const val DETAILS_CACHE_SIZE = 200
+			private const val PAGES_CACHE_SIZE = 400
+		}
 }
