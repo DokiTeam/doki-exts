@@ -5,6 +5,7 @@ plugins {
     `maven-publish`
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.ksp)
+    id("com.google.protobuf") version "0.9.4"
 }
 
 group = "org.dokiteam"
@@ -35,6 +36,11 @@ kotlin {
     sourceSets["main"].kotlin.srcDirs("build/generated/ksp/main/kotlin")
 }
 
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.33.5"
+    }
+}
 publishing {
     publications {
         create<MavenPublication>("mavenJava") {
@@ -50,6 +56,7 @@ dependencies {
     implementation(libs.json)
     implementation(libs.androidx.collection)
     api(libs.jsoup)
+	api(libs.protobuf.java)
 
     ksp(project(":doki-ksp"))
 
