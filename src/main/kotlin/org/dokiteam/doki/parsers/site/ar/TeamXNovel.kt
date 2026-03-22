@@ -11,7 +11,6 @@ import org.dokiteam.doki.parsers.config.ConfigKey
 import org.dokiteam.doki.parsers.core.PagedMangaParser
 import org.dokiteam.doki.parsers.model.*
 import org.dokiteam.doki.parsers.util.*
-import java.text.SimpleDateFormat
 import java.util.*
 
 @MangaSourceParser("TEAMXNOVEL", "TeamXNovel", "ar")
@@ -59,7 +58,6 @@ internal class TeamXNovel(context: MangaLoaderContext) :
 				}
 
 				else -> {
-
 					if (order == SortOrder.UPDATED) {
 						if (filter.tags.isNotEmpty() || filter.demographics.isNotEmpty()) {
 							throw IllegalArgumentException("Updated sorting does not support other sorting filters")
@@ -147,7 +145,7 @@ internal class TeamXNovel(context: MangaLoaderContext) :
 		var maxPageChapter = 1
 		if (!maxPageChapterSelect.isNullOrEmpty()) {
 			maxPageChapterSelect.map {
-				val i = it.attr("href").substringAfterLast("=").toInt()
+				val i = it.attr("href").substringAfterLast("=").toIntOrNull() ?: 1
 				if (i > maxPageChapter) {
 					maxPageChapter = i
 				}
@@ -192,20 +190,40 @@ internal class TeamXNovel(context: MangaLoaderContext) :
 		return parseChapters(webClient.httpGet("$baseUrl?page=$page").parseHtml().body())
 	}
 
-	private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", sourceLocale)
-
+	// NEW: parseChapters rewritten to match the new TeamX HTML structure.
+	// The site replaced the old ".eplister ul li" layout with a card-based grid:
+	//   <div id="chaptersContainer">
+	//     <div class="chapter-card" data-number="49" data-date="1774058776">
+	//       <a class="chapter-link" href="/series/.../49">
+	//         <div class="chapter-number">الفصل 49</div>
+	//         <div class="chapter-title">متغير الموت</div>
+	//       </a>
+	//     </div>
+	//   </div>
+	// date is now a Unix timestamp (seconds) in the data-date attribute.
 	private fun parseChapters(root: Element): List<MangaChapter> {
-		return root.requireElementById("chapter-contact").select(".eplister ul li")
-			.map { li ->
-				val url = li.selectFirstOrThrow("a").attrAsRelativeUrl("href")
+		return root.requireElementById("chaptersContainer").select("div.chapter-card")
+			.map { card ->
+				val url = card.selectFirstOrThrow("a.chapter-link").attrAsRelativeUrl("href")
+				val chapterNumber = card.selectFirst(".chapter-number")?.text() ?: ""
+				val chapterTitle = card.selectFirst(".chapter-title")?.text() ?: ""
+				// Combine number + title, or fall back to just the number label
+				val title = if (chapterTitle.isNotBlank() && chapterTitle != card.attr("data-number")) {
+					"$chapterNumber - $chapterTitle"
+				} else {
+					chapterNumber
+				}
 				MangaChapter(
 					id = generateUid(url),
-					title = li.selectFirstOrThrow(".epl-title").text(),
-					number = url.substringAfterLast('/').toFloatOrNull() ?: 0f,
+					title = title,
+					// data-number holds the chapter number directly (e.g. "49" or "37.5")
+					number = card.attr("data-number").toFloatOrNull()
+						?: url.substringAfterLast('/').toFloatOrNull() ?: 0f,
 					volume = 0,
 					url = url,
 					scanlator = null,
-					uploadDate = dateFormat.parseSafe(li.selectFirstOrThrow(".epl-date").text()),
+					// data-date is a Unix timestamp in seconds → convert to milliseconds
+					uploadDate = card.attr("data-date").toLongOrNull()?.times(1000L) ?: 0L,
 					branch = null,
 					source = source,
 				)
@@ -220,7 +238,6 @@ internal class TeamXNovel(context: MangaLoaderContext) :
 				img.hasAttr("src") -> img.requireSrc().toRelativeUrl(domain)
 				else -> img.attrAsRelativeUrl("data-src")
 			}
-			
 			MangaPage(
 				id = generateUid(url),
 				url = url,
