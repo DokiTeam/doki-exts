@@ -7,6 +7,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.Response
 import okio.IOException
+import org.jsoup.HttpStatusException
 import org.dokiteam.doki.parsers.ErrorMessages
 import org.dokiteam.doki.parsers.MangaLoaderContext
 import org.dokiteam.doki.parsers.MangaSourceParser
@@ -20,6 +21,7 @@ import org.dokiteam.doki.parsers.network.UserAgents
 import org.dokiteam.doki.parsers.network.WebClient
 import org.dokiteam.doki.parsers.util.*
 import org.dokiteam.doki.parsers.util.json.*
+import java.net.HttpURLConnection
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.time.Duration.Companion.seconds
@@ -40,9 +42,9 @@ internal class CuuTruyenParser(context: MangaLoaderContext) :
 	}
 
 	override val configKeyDomain = ConfigKey.Domain(
+		"hetcuutruyen.net",
 		"cuutruyen.net",
 		"nettrom.com",
-		"hetcuutruyen.net",
 	)
 
     private val preferredServerKey = ConfigKey.PreferredImageServer(
@@ -146,10 +148,7 @@ internal class CuuTruyenParser(context: MangaLoaderContext) :
             append(pageSize)
         }
 
-        // prevent throw e in app
-        val json = runCatching {
-            webClient.httpGet("https://$domain$apiSuffix$url").parseJson()
-        }.getOrNull() ?: return emptyList()
+		val json = requestJson("https://$domain$apiSuffix$url")
 
         val data = json.optJSONArray("data")
             ?: json.getJSONObject("data").getJSONArray("new_chapter_mangas")
@@ -181,9 +180,9 @@ internal class CuuTruyenParser(context: MangaLoaderContext) :
 	override suspend fun getDetails(manga: Manga): Manga = coroutineScope {
 		val url = "https://" + domain + manga.url
 		val chapters = async {
-			webClient.httpGet("$url/chapters").parseJson().getJSONArray("data")
+			requestJson("$url/chapters").getJSONArray("data")
 		}
-		val json = webClient.httpGet(url).parseJson().getJSONObject("data")
+		val json = requestJson(url).getJSONObject("data")
 		val chapterDateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.ROOT).apply {
 			timeZone = TimeZone.getTimeZone("GMT+7")
 		}
@@ -237,7 +236,7 @@ internal class CuuTruyenParser(context: MangaLoaderContext) :
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
 		val url = "https://$domain${chapter.url}"
-		val json = webClient.httpGet(url).parseJson().getJSONObject("data")
+		val json = requestJson(url).getJSONObject("data")
 
 		return json.getJSONArray("pages").mapJSON { jo ->
 			val imageUrl = jo.getString("image_url").toHttpUrl().newBuilder()
@@ -298,6 +297,17 @@ internal class CuuTruyenParser(context: MangaLoaderContext) :
 		return this.mapIndexed { i, b ->
 			(b.toInt() xor k[i % k.size].toInt()).toByte()
 		}.toByteArray()
+	}
+
+	private suspend fun requestJson(url: String) = try {
+		webClient.httpGet(url).parseJson()
+	} catch (e: HttpStatusException) {
+		if (e.statusCode == HttpURLConnection.HTTP_FORBIDDEN ||
+			e.statusCode == HttpURLConnection.HTTP_UNAVAILABLE
+		) {
+			context.requestBrowserAction(this, "https://$domain/")
+		}
+		throw e
 	}
 
     private fun space2plus(input: String): String = input.replace(' ', '+')
