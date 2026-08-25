@@ -7,7 +7,6 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.Response
 import okio.IOException
-import org.jsoup.HttpStatusException
 import org.dokiteam.doki.parsers.ErrorMessages
 import org.dokiteam.doki.parsers.MangaLoaderContext
 import org.dokiteam.doki.parsers.MangaSourceParser
@@ -21,7 +20,6 @@ import org.dokiteam.doki.parsers.network.UserAgents
 import org.dokiteam.doki.parsers.network.WebClient
 import org.dokiteam.doki.parsers.util.*
 import org.dokiteam.doki.parsers.util.json.*
-import java.net.HttpURLConnection
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.time.Duration.Companion.seconds
@@ -35,16 +33,17 @@ internal class CuuTruyenParser(context: MangaLoaderContext) :
 
 	override val webClient: WebClient by lazy {
 		val newHttpClient = context.httpClient.newBuilder()
-			.rateLimit(50, 60.seconds)
+			.rateLimit(25, 60.seconds)
+			.addInterceptor(::storageHostInterceptor)
 			.build()
 
 		OkHttpWebClient(newHttpClient, source)
 	}
 
 	override val configKeyDomain = ConfigKey.Domain(
-		"hetcuutruyen.net",
 		"cuutruyen.net",
 		"nettrom.com",
+		"hetcuutruyen.net",
 	)
 
     private val preferredServerKey = ConfigKey.PreferredImageServer(
@@ -148,7 +147,10 @@ internal class CuuTruyenParser(context: MangaLoaderContext) :
             append(pageSize)
         }
 
-		val json = requestJson("https://$domain$apiSuffix$url")
+        // prevent throw e in app
+        val json = runCatching {
+            webClient.httpGet("https://$domain$apiSuffix$url").parseJson()
+        }.getOrNull() ?: return emptyList()
 
         val data = json.optJSONArray("data")
             ?: json.getJSONObject("data").getJSONArray("new_chapter_mangas")
@@ -163,9 +165,9 @@ internal class CuuTruyenParser(context: MangaLoaderContext) :
 				publicUrl = "https://truycapcuutruyen.pages.dev/mangas/${jo.getLong("id")}",
 				title = jo.getString("name"),
 				altTitles = emptySet(),
-				coverUrl = if (server == MOBILE_COVER) jo.getString(MOBILE_COVER)
-                    else jo.getString(DESKTOP_COVER),
-				largeCoverUrl = jo.getString(DESKTOP_COVER),
+				coverUrl = if (server == MOBILE_COVER) jo.getString(MOBILE_COVER).fixStorageHost()
+                    else jo.getString(DESKTOP_COVER).fixStorageHost(),
+				largeCoverUrl = jo.getString(DESKTOP_COVER).fixStorageHost(),
 				authors = setOfNotNull(author),
 				tags = emptySet(),
 				state = null,
@@ -180,9 +182,9 @@ internal class CuuTruyenParser(context: MangaLoaderContext) :
 	override suspend fun getDetails(manga: Manga): Manga = coroutineScope {
 		val url = "https://" + domain + manga.url
 		val chapters = async {
-			requestJson("$url/chapters").getJSONArray("data")
+			webClient.httpGet("$url/chapters").parseJson().getJSONArray("data")
 		}
-		val json = requestJson(url).getJSONObject("data")
+		val json = webClient.httpGet(url).parseJson().getJSONObject("data")
 		val chapterDateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.ROOT).apply {
 			timeZone = TimeZone.getTimeZone("GMT+7")
 		}
@@ -236,12 +238,12 @@ internal class CuuTruyenParser(context: MangaLoaderContext) :
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
 		val url = "https://$domain${chapter.url}"
-		val json = requestJson(url).getJSONObject("data")
+		val json = webClient.httpGet(url).parseJson().getJSONObject("data")
 
 		return json.getJSONArray("pages").mapJSON { jo ->
-			val imageUrl = jo.getString("image_url").toHttpUrl().newBuilder()
+			val imageUrl = jo.getString("image_url").fixStorageHost().toHttpUrl().newBuilder()
 			val id = jo.getLong("id")
-			val drm = jo.getStringOrNull("drm_data")
+			val drm = jo.getStringOrNull("drm_data")?.filterNot { it.isWhitespace() }
 			if (!drm.isNullOrEmpty()) {
 				imageUrl.fragment(DRM_DATA_KEY + drm)
 			}
@@ -252,6 +254,29 @@ internal class CuuTruyenParser(context: MangaLoaderContext) :
 				source = source,
 			)
 		}
+	}
+
+	private fun String.fixStorageHost(): String {
+		var result = this
+		for ((from, to) in STORAGE_HOST_FALLBACK) {
+			result = result.replace(from, to)
+		}
+		return result
+	}
+
+	private fun storageHostInterceptor(chain: Interceptor.Chain): Response {
+		var request = chain.request()
+		STORAGE_HOST_FALLBACK[request.url.host]?.let { host ->
+			request = request.newBuilder()
+				.url(request.url.newBuilder().host(host).build())
+				.build()
+		}
+		if (request.url.encodedPath.startsWith("/api/")) {
+			request = request.newBuilder()
+				.header("Cuutruyen-Client", CLIENT_HEADER)
+				.build()
+		}
+		return chain.proceed(request)
 	}
 
 	override fun intercept(chain: Interceptor.Chain): Response {
@@ -297,17 +322,6 @@ internal class CuuTruyenParser(context: MangaLoaderContext) :
 		return this.mapIndexed { i, b ->
 			(b.toInt() xor k[i % k.size].toInt()).toByte()
 		}.toByteArray()
-	}
-
-	private suspend fun requestJson(url: String) = try {
-		webClient.httpGet(url).parseJson()
-	} catch (e: HttpStatusException) {
-		if (e.statusCode == HttpURLConnection.HTTP_FORBIDDEN ||
-			e.statusCode == HttpURLConnection.HTTP_UNAVAILABLE
-		) {
-			context.requestBrowserAction(this, "https://$domain/")
-		}
-		throw e
 	}
 
     private fun space2plus(input: String): String = input.replace(' ', '+')
@@ -456,7 +470,12 @@ internal class CuuTruyenParser(context: MangaLoaderContext) :
 	private companion object {
 		const val DRM_DATA_KEY = "drm_data="
 		const val DECRYPTION_KEY = "3141592653589793"
-        const val MOBILE_COVER = "cover_mobile_url"
-        const val DESKTOP_COVER = "cover_url"
+		const val MOBILE_COVER = "cover_mobile_url"
+		const val DESKTOP_COVER = "cover_url"
+		const val CLIENT_HEADER = "OfficialWebApp-20250805"
+		val STORAGE_HOST_FALLBACK = mapOf(
+			"storage-ct.lrclib.net" to "storage-bravo.cuutruyen.net",
+			"storage-ct-riften.site" to "storage-charlie.cuutruyen.net",
+		)
 	}
 }
